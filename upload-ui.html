@@ -1,455 +1,600 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Past Sales — Upload & AI Forecast</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Sales Dashboard — Upload & AI Forecast</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; min-height: 100vh; padding: 2rem; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;min-height:100vh;padding:2rem}
 
-    .card {
-      background: #fff; border-radius: 12px;
-      box-shadow: 0 2px 16px rgba(0,0,0,.10);
-      padding: 2rem; max-width: 1200px;
-      margin: 0 auto 2rem auto;
-    }
-    h1  { font-size: 1.6rem; color: #1a202c; margin-bottom: .3rem; }
-    h2  { font-size: 1.2rem; color: #2d3748; margin-bottom: 1rem; }
-    .subtitle { color: #718096; font-size: .9rem; margin-bottom: 1.5rem; }
+    /* ── Card ─────────────────────────────────── */
+    .card{background:#fff;border-radius:14px;box-shadow:0 2px 20px rgba(0,0,0,.09);padding:2rem;max-width:1300px;margin:0 auto 1.5rem}
+    h1{font-size:1.55rem;color:#1a202c;margin-bottom:.3rem}
+    h2{font-size:1.15rem;color:#2d3748;margin-bottom:.8rem}
+    .sub{color:#718096;font-size:.88rem;margin-bottom:1.4rem}
 
-    /* ── Drop zone ─────────────────────────────────── */
-    .drop-zone {
-      border: 2.5px dashed #90cdf4; border-radius: 10px;
-      background: #ebf8ff; padding: 2.5rem;
-      text-align: center; cursor: pointer;
-      transition: background .2s, border-color .2s;
-    }
-    .drop-zone:hover,.drop-zone.dragover { background: #bee3f8; border-color: #3182ce; }
-    .drop-zone input[type="file"] { display: none; }
-    .drop-icon { font-size: 2.5rem; margin-bottom: .5rem; }
-    .drop-text { color: #2b6cb0; font-weight: 600; font-size: 1rem; }
-    .drop-hint { color: #718096; font-size: .8rem; margin-top: .3rem; }
-    .file-chosen { margin-top: 1rem; padding: .6rem 1rem; background: #e9f7ef; border-radius: 6px; color: #276749; font-size: .9rem; display: none; }
+    /* ── Drop zone ────────────────────────────── */
+    .drop-zone{border:2.5px dashed #90cdf4;border-radius:10px;background:#ebf8ff;padding:2rem;text-align:center;cursor:pointer;transition:.2s}
+    .drop-zone:hover,.drop-zone.over{background:#bee3f8;border-color:#3182ce}
+    .drop-zone input[type=file]{display:none}
+    .drop-icon{font-size:2.2rem;margin-bottom:.4rem}
+    .file-chosen{margin-top:.8rem;padding:.5rem 1rem;background:#e9f7ef;border-radius:6px;color:#276749;font-size:.88rem;display:none}
 
-    /* ── Buttons ──────────────────────────────────── */
-    .btn-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; align-items: center; }
-    button { padding: .65rem 1.8rem; border: none; border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; transition: opacity .2s; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-upload  { background: #3182ce; color: #fff; }
-    .btn-upload:hover:not(:disabled)   { background: #2b6cb0; }
-    .btn-forecast{ background: linear-gradient(135deg,#6b46c1,#9f7aea); color: #fff; }
-    .btn-forecast:hover:not(:disabled) { opacity: .9; }
-    .btn-refresh { background: #e2e8f0; color: #2d3748; }
-    .btn-refresh:hover { background: #cbd5e0; }
+    /* ── Progress ─────────────────────────────── */
+    .prog-wrap{margin-top:.8rem;height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;display:none}
+    .prog-bar{height:100%;background:linear-gradient(90deg,#3182ce,#63b3ed);border-radius:99px;width:0;transition:width .3s}
 
-    /* ── Progress bar ──────────────────────────────── */
-    .progress-wrap { margin-top: 1rem; background: #e2e8f0; border-radius: 99px; height: 8px; overflow: hidden; display: none; }
-    .progress-bar  { height: 100%; background: linear-gradient(90deg,#3182ce,#63b3ed); border-radius: 99px; width: 0%; transition: width .3s; }
+    /* ── Status message ───────────────────────── */
+    .msg{margin-top:.8rem;padding:.7rem 1rem;border-radius:8px;font-size:.88rem;font-weight:500;display:none}
+    .msg.ok {background:#c6f6d5;color:#22543d}
+    .msg.err{background:#fed7d7;color:#742a2a}
+    .msg.inf{background:#bee3f8;color:#2a4365}
 
-    /* ── Status / alert ────────────────────────────── */
-    .status { margin-top: 1rem; padding: .75rem 1rem; border-radius: 8px; font-size: .9rem; font-weight: 500; display: none; }
-    .status.success { background: #c6f6d5; color: #22543d; }
-    .status.error   { background: #fed7d7; color: #742a2a; }
-    .status.info    { background: #bee3f8; color: #2a4365; }
+    /* ── Buttons ──────────────────────────────── */
+    .row{display:flex;gap:.9rem;flex-wrap:wrap;align-items:center;margin-top:1.2rem}
+    btn,button{padding:.6rem 1.6rem;border:none;border-radius:8px;font-size:.93rem;font-weight:600;cursor:pointer;transition:.2s}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .b-blue{background:#3182ce;color:#fff}.b-blue:hover:not(:disabled){background:#2b6cb0}
+    .b-purple{background:linear-gradient(135deg,#6b46c1,#9f7aea);color:#fff}.b-purple:hover:not(:disabled){opacity:.88}
+    .b-gray{background:#e2e8f0;color:#2d3748}.b-gray:hover{background:#cbd5e0}
+    .b-sm{padding:.4rem 1rem;font-size:.82rem}
 
-    /* ── Stat boxes ────────────────────────────────── */
-    .stats-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; display: none; }
-    .stat-box  { flex: 1; min-width: 140px; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem 1.2rem; text-align: center; }
-    .stat-num  { font-size: 1.6rem; font-weight: 700; color: #2b6cb0; }
-    .stat-label{ font-size: .78rem; color: #718096; margin-top: .2rem; }
+    /* ── Stat boxes ───────────────────────────── */
+    .stats{display:none;gap:1rem;margin-top:1.2rem;flex-wrap:wrap}
+    .sbox{flex:1;min-width:130px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:10px;padding:.9rem 1rem;text-align:center}
+    .snum{font-size:1.5rem;font-weight:700;color:#2b6cb0}
+    .slbl{font-size:.76rem;color:#718096;margin-top:.2rem}
 
-    /* ── Tables ────────────────────────────────────── */
-    .table-section { overflow-x: auto; }
-    .table-title { font-size: 1.05rem; font-weight: 700; color: #2d3748; margin-bottom: 1rem; }
-    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-    thead th { background: #2b6cb0; color: #fff; padding: .7rem .8rem; text-align: center; white-space: nowrap; position: sticky; top: 0; }
-    thead th:first-child { border-radius: 8px 0 0 0; } thead th:last-child { border-radius: 0 8px 0 0; }
-    tbody tr:nth-child(even) { background: #f7fafc; }
-    tbody tr:hover { background: #ebf8ff; }
-    tbody td { padding: .6rem .8rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    td.neg { color: #c53030; } td.pos { color: #276749; }
+    /* ── Tabs ─────────────────────────────────── */
+    .tab-nav{display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:1.5rem}
+    .tab-btn{padding:.7rem 1.8rem;border:none;background:none;cursor:pointer;font-size:.95rem;font-weight:600;color:#718096;border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s;border-radius:6px 6px 0 0}
+    .tab-btn:hover{color:#2b6cb0;background:#ebf8ff}
+    .tab-btn.active{color:#2b6cb0;border-bottom-color:#3182ce;background:#ebf8ff}
+    .tab-btn.active-purple{color:#6b46c1;border-bottom-color:#6b46c1;background:#faf5ff}
+    .tab-pane{display:none}.tab-pane.active{display:block}
 
-    /* ── AI Forecast panel ────────────────────────── */
-    .forecast-card { border: 2px solid #9f7aea; }
-    .forecast-card h2 { color: #6b46c1; }
+    /* ── Table ────────────────────────────────── */
+    .tbl-wrap{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;font-size:.82rem}
+    thead th{background:#2b6cb0;color:#fff;padding:.65rem .8rem;text-align:center;white-space:nowrap;position:sticky;top:0}
+    thead th:first-child{border-radius:8px 0 0 0}thead th:last-child{border-radius:0 8px 0 0}
+    .th-purple{background:#6b46c1!important}
+    tbody tr:nth-child(even){background:#f7fafc}
+    tbody tr:hover{background:#ebf8ff}
+    tbody td{padding:.58rem .8rem;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+    td.r{text-align:right;font-variant-numeric:tabular-nums}
+    td.neg{color:#c53030}td.pos{color:#276749}
+    .empty{text-align:center;color:#a0aec0;padding:2.5rem;font-size:.88rem}
 
-    /* AI progress log */
-    .ai-log {
-      background: #1a1a2e; border-radius: 8px;
-      padding: 1rem; font-family: 'Consolas', monospace;
-      font-size: .82rem; color: #a0aec0;
-      max-height: 200px; overflow-y: auto;
-      margin-top: 1rem; display: none;
-    }
-    .ai-log .log-line { padding: .15rem 0; border-bottom: 1px solid #2d2d4e; }
-    .ai-log .log-step { color: #68d391; }
-    .ai-log .log-think{ color: #f6e05e; }
-    .ai-log .log-err  { color: #fc8181; }
+    /* Clickable forecast row */
+    .fc-row{cursor:pointer;transition:.15s}
+    .fc-row:hover td{background:#f3e8ff!important}
+    .fc-row td:last-child .link-hint{font-size:.7rem;color:#9f7aea;margin-left:.3rem;opacity:0}
+    .fc-row:hover td:last-child .link-hint{opacity:1}
 
-    /* Insight pills */
-    .insight-list { list-style: none; padding: 0; }
-    .insight-list li {
-      background: #faf5ff; border-left: 3px solid #9f7aea;
-      padding: .4rem .8rem; margin-bottom: .4rem;
-      border-radius: 0 6px 6px 0; font-size: .85rem; color: #44337a;
-    }
-    .risk-list li { background: #fff5f5; border-left-color: #fc8181; color: #742a2a; }
+    /* Badge */
+    .badge{display:inline-block;padding:.22rem .65rem;border-radius:99px;font-size:.74rem;font-weight:700}
+    .bh{background:#c6f6d5;color:#22543d}.bm{background:#fefcbf;color:#744210}.bl{background:#fed7d7;color:#742a2a}
+    .grow-up{color:#276749;font-weight:700}.grow-dn{color:#c53030;font-weight:700}
 
-    /* Confidence badge */
-    .badge { display: inline-block; padding: .25rem .7rem; border-radius: 99px; font-size: .75rem; font-weight: 700; }
-    .badge-high   { background: #c6f6d5; color: #22543d; }
-    .badge-medium { background: #fefcbf; color: #744210; }
-    .badge-low    { background: #fed7d7; color: #742a2a; }
+    /* AI Log */
+    .ai-log{background:#1a1a2e;border-radius:8px;padding:1rem;font-family:Consolas,monospace;font-size:.8rem;color:#a0aec0;max-height:180px;overflow-y:auto;margin-top:1rem;display:none}
+    .lg-s{color:#68d391}.lg-t{color:#f6e05e}.lg-e{color:#fc8181}
 
-    /* Growth indicator */
-    .growth-up   { color: #276749; font-weight: 700; }
-    .growth-down { color: #c53030; font-weight: 700; }
+    /* ─── DETAIL PAGE ─────────────────────────── */
+    #detailView{display:none}
+    .back-btn{display:inline-flex;align-items:center;gap:.5rem;color:#6b46c1;font-weight:600;font-size:.9rem;cursor:pointer;margin-bottom:1.2rem;background:none;border:none;padding:0}
+    .back-btn:hover{text-decoration:underline}
 
-    /* Forecast header row (purple) */
-    thead.forecast-head th { background: #6b46c1; }
+    .detail-header{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem}
+    .det-title{font-size:1.4rem;font-weight:700;color:#1a202c}
+    .det-sub{font-size:.9rem;color:#718096;margin-top:.2rem}
+
+    /* Monthly bar chart */
+    .bar-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.8rem;margin-top:1rem}
+    .bar-item{background:#f7fafc;border-radius:8px;padding:.7rem 1rem}
+    .bar-label{font-size:.78rem;font-weight:600;color:#4a5568;margin-bottom:.3rem;display:flex;justify-content:space-between}
+    .bar-track{background:#e2e8f0;border-radius:99px;height:8px;overflow:hidden}
+    .bar-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#6b46c1,#9f7aea);transition:width .6s ease}
+    .bar-val{font-size:.75rem;color:#6b46c1;font-weight:700;margin-top:.25rem;text-align:right}
+
+    /* Detail sections */
+    .det-section{margin-bottom:1.5rem}
+    .det-section-title{font-size:.95rem;font-weight:700;color:#2d3748;margin-bottom:.7rem;display:flex;align-items:center;gap:.4rem}
+    .det-section-title span{font-size:1.1rem}
+
+    .reason-box{background:#faf5ff;border:1px solid #d6bcfa;border-radius:10px;padding:1rem 1.2rem;font-size:.88rem;color:#44337a;line-height:1.7}
+    .conf-box  {background:#ebf8ff;border:1px solid #90cdf4;border-radius:10px;padding:1rem 1.2rem;font-size:.88rem;color:#2a4365;line-height:1.7}
+
+    .rec-list{list-style:none;padding:0}
+    .rec-item{display:flex;gap:.8rem;align-items:flex-start;background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;padding:.75rem 1rem;margin-bottom:.6rem}
+    .rec-item.med{background:#fffbeb;border-color:#f6e05e}
+    .rec-item.low{background:#f7fafc;border-color:#cbd5e0}
+    .rec-prio{font-size:.72rem;font-weight:700;padding:.2rem .55rem;border-radius:99px;white-space:nowrap}
+    .prio-high{background:#c6f6d5;color:#22543d}
+    .prio-med {background:#fefcbf;color:#744210}
+    .prio-low {background:#e2e8f0;color:#4a5568}
+    .rec-text .rec-action{font-weight:600;font-size:.87rem;color:#1a202c}
+    .rec-text .rec-why  {font-size:.8rem;color:#718096;margin-top:.15rem}
+
+    .highlight-list{list-style:none;padding:0}
+    .hl-item{display:flex;gap:.7rem;align-items:flex-start;padding:.5rem 0;border-bottom:1px solid #f0f0f0}
+    .hl-item:last-child{border-bottom:none}
+    .hl-month{font-weight:700;font-size:.85rem;color:#6b46c1;min-width:3.5rem}
+    .hl-val  {font-size:.82rem;color:#2b6cb0;font-weight:600;min-width:7rem;text-align:right}
+    .hl-note {font-size:.82rem;color:#4a5568;flex:1}
+
+    .risk-list{list-style:none;padding:0}
+    .risk-item{background:#fff5f5;border-left:3px solid #fc8181;padding:.5rem .9rem;border-radius:0 6px 6px 0;margin-bottom:.4rem;font-size:.85rem;color:#742a2a}
 
     /* Spinner */
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
-    .spinner-purple { border-color: #9f7aea; border-top-color: transparent; }
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
 
-    /* Summary box */
-    .summary-box { background: #faf5ff; border: 1px solid #d6bcfa; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; font-size: .88rem; color: #44337a; line-height: 1.6; }
-    .method-box  { background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; font-size: .85rem; color: #22543d; }
+    /* Page transition */
+    .page-enter{animation:slideIn .25s ease}
+    @keyframes slideIn{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
   </style>
 </head>
 <body>
 
-<!-- ══════════════════ UPLOAD CARD ══════════════════ -->
-<div class="card">
-  <h1>📊 Past Sales Upload</h1>
-  <p class="subtitle">Upload Excel → data automatically aggregated monthly and saved to PostgreSQL</p>
+<!-- ══════ MAIN VIEW ══════════════════════════════════════════ -->
+<div id="mainView">
 
-  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-    <input type="file" id="fileInput" accept=".xlsx,.xls" />
-    <div class="drop-icon">📁</div>
-    <div class="drop-text">Click karo ya yahan Excel file drop karo</div>
-    <div class="drop-hint">Supported: .xlsx, .xls &nbsp;|&nbsp; Max size: 50 MB</div>
+  <!-- Upload Card -->
+  <div class="card">
+    <h1>📊 Sales Dashboard</h1>
+    <p class="sub">Excel upload → PostgreSQL → AI Forecast via Claude Opus 5.5</p>
+
+    <div class="drop-zone" id="dz" onclick="document.getElementById('fi').click()">
+      <input type="file" id="fi" accept=".xlsx,.xls"/>
+      <div class="drop-icon">📁</div>
+      <div style="color:#2b6cb0;font-weight:600">Click karo ya file drop karo</div>
+      <div style="color:#718096;font-size:.8rem;margin-top:.3rem">.xlsx / .xls · Max 50 MB</div>
+    </div>
+    <div class="file-chosen" id="fileChosen">✅ Selected: <strong id="fName"></strong></div>
+    <div class="prog-wrap" id="pw"><div class="prog-bar" id="pb"></div></div>
+    <div class="msg" id="uMsg"></div>
+
+    <div class="stats" id="stats">
+      <div class="sbox"><div class="snum" id="sRows">–</div><div class="slbl">Excel Rows</div></div>
+      <div class="sbox"><div class="snum" id="sUp">–</div><div class="slbl">DB Records Saved</div></div>
+      <div class="sbox"><div class="snum" id="sTot">–</div><div class="slbl">Total in DB</div></div>
+    </div>
+
+    <div class="row">
+      <button class="b-blue" id="btnUp" onclick="uploadFile()" disabled>Upload Excel</button>
+      <button class="b-gray" onclick="loadAll()">🔄 Refresh Data</button>
+    </div>
   </div>
-  <div class="file-chosen" id="fileChosen">✅ File selected: <strong id="fileName"></strong></div>
 
-  <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
-  <div class="status" id="statusMsg"></div>
+  <!-- Tabs Card -->
+  <div class="card">
+    <div class="tab-nav">
+      <button class="tab-btn active"        id="t1" onclick="switchTab(1)">📋 Current Sales</button>
+      <button class="tab-btn active-purple" id="t2" onclick="switchTab(2)" style="color:#9f7aea;border-bottom-color:transparent">🤖 Future Forecast</button>
+    </div>
 
-  <div class="stats-row" id="statsRow">
-    <div class="stat-box"><div class="stat-num" id="statRows">–</div><div class="stat-label">Excel Rows Read</div></div>
-    <div class="stat-box"><div class="stat-num" id="statUpserted">–</div><div class="stat-label">Records Saved</div></div>
-    <div class="stat-box"><div class="stat-num" id="statTable">–</div><div class="stat-label">Total DB Records</div></div>
+    <!-- ── Tab 1: Current ── -->
+    <div class="tab-pane active" id="pane1">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Customer</th><th>Fisc Var</th><th>Year</th>
+            <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th><th>MAY</th><th>JUN</th>
+            <th>JUL</th><th>AUG</th><th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+          </tr></thead>
+          <tbody id="histBody"><tr><td colspan="15" class="empty">Upload data ya Refresh click karo</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Tab 2: Future Forecast ── -->
+    <div class="tab-pane" id="pane2">
+      <!-- AI controls -->
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem">
+        <button class="b-purple" id="btnFc" onclick="generateForecast()">✨ Generate AI Forecast</button>
+        <button class="b-gray"   onclick="loadForecastTab()">🔄 Load Saved Forecast</button>
+        <span style="font-size:.8rem;color:#a0aec0">Click any row → detailed reasoning & recommendations</span>
+      </div>
+      <div class="ai-log" id="aiLog"></div>
+
+      <!-- Forecast table — same columns as Tab 1 + extra -->
+      <div class="tbl-wrap" style="margin-top:1rem">
+        <table>
+          <thead><tr>
+            <th class="th-purple">Customer</th><th class="th-purple">Fisc Var</th><th class="th-purple">Year</th>
+            <th class="th-purple">JAN</th><th class="th-purple">FEB</th><th class="th-purple">MAR</th>
+            <th class="th-purple">APR</th><th class="th-purple">MAY</th><th class="th-purple">JUN</th>
+            <th class="th-purple">JUL</th><th class="th-purple">AUG</th><th class="th-purple">SEP</th>
+            <th class="th-purple">OCT</th><th class="th-purple">NOV</th><th class="th-purple">DEC</th>
+            <th class="th-purple">TOTAL</th><th class="th-purple">YoY%</th><th class="th-purple">Confidence</th>
+          </tr></thead>
+          <tbody id="fcBody"><tr><td colspan="18" class="empty">Generate forecast ya Load click karo</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <div class="btn-row">
-    <button class="btn-upload" id="btnUpload" onclick="uploadFile()" disabled>Upload Excel</button>
-    <button class="btn-refresh" onclick="loadHistTable()">🔄 Refresh Table</button>
-  </div>
-</div>
+</div><!-- end mainView -->
 
-<!-- ══════════════════ HISTORICAL DATA TABLE ══════════════════ -->
-<div class="card">
-  <div class="table-title">📋 Historical Sales Data (Monthly Sums)</div>
-  <div class="table-section">
-    <table id="salesTable">
-      <thead><tr>
-        <th>Customer</th><th>Fisc Var</th><th>Year</th>
-        <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
-        <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
-        <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
-      </tr></thead>
-      <tbody id="histBody"><tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Upload data ya "Refresh Table" click karo</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ══════════════════ AI FORECAST CARD ══════════════════ -->
-<div class="card forecast-card">
-  <h2>🤖 AI Sales Forecast — Claude Opus 5.5</h2>
-  <p class="subtitle">Historical data ke basis par next year ka monthly forecast generate karo using Anthropic Claude AI</p>
-
-  <!-- AI progress log -->
-  <div class="ai-log" id="aiLog"></div>
-
-  <div class="btn-row" style="margin-top:1.2rem">
-    <button class="btn-forecast" id="btnForecast" onclick="generateForecast()">
-      ✨ Generate AI Forecast
+<!-- ══════ DETAIL VIEW ════════════════════════════════════════ -->
+<div id="detailView">
+  <div class="card page-enter" id="detailCard">
+    <!-- Back -->
+    <button class="back-btn" onclick="closeDetail()">
+      ← Back to Future Forecast
     </button>
-    <button class="btn-refresh" onclick="loadForecastTable()">🔄 Load Saved Forecast</button>
-  </div>
 
-  <!-- Forecast results (hidden until generated) -->
-  <div id="forecastResult" style="display:none; margin-top:2rem">
-
-    <!-- Executive summary -->
-    <div class="summary-box" id="execSummary"></div>
-    <div class="method-box" id="methodBox"></div>
-
-    <!-- Monthly forecast table -->
-    <div class="table-title" id="forecastTableTitle" style="margin-top:1.5rem"></div>
-    <div class="table-section">
-      <table id="forecastTable">
-        <thead class="forecast-head"><tr>
-          <th>Customer</th><th>Fisc Var</th><th>Year</th>
-          <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
-          <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
-          <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
-          <th>TOTAL</th><th>YoY %</th><th>Confidence</th>
-        </tr></thead>
-        <tbody id="forecastBody"></tbody>
-      </table>
+    <!-- Header -->
+    <div class="detail-header">
+      <div>
+        <div class="det-title" id="detTitle">–</div>
+        <div class="det-sub"   id="detSub">–</div>
+      </div>
+      <span class="badge" id="detBadge">–</span>
     </div>
 
-    <!-- Insights & Risks -->
-    <div style="display:flex; gap:1.5rem; margin-top:1.5rem; flex-wrap:wrap">
-      <div style="flex:1; min-width:260px">
-        <div class="table-title">💡 Key Insights</div>
-        <ul class="insight-list" id="insightList"></ul>
-      </div>
-      <div style="flex:1; min-width:260px">
-        <div class="table-title">⚠️ Risk Factors</div>
-        <ul class="insight-list risk-list" id="riskList"></ul>
+    <!-- Monthly bar chart -->
+    <div class="det-section">
+      <div class="det-section-title"><span>📅</span> Monthly Forecast Breakdown</div>
+      <div class="bar-grid" id="barGrid"></div>
+    </div>
+
+    <!-- Reasoning -->
+    <div class="det-section">
+      <div class="det-section-title"><span>🧠</span> Reasoning</div>
+      <div class="reason-box" id="detReason">
+        <em style="color:#a0aec0">Click "Get AI Analysis" to load detailed reasoning...</em>
       </div>
     </div>
 
-    <!-- Token usage -->
-    <div style="margin-top:1rem; font-size:.78rem; color:#a0aec0" id="tokenInfo"></div>
+    <!-- Confidence -->
+    <div class="det-section">
+      <div class="det-section-title"><span>🎯</span> Confidence Explanation</div>
+      <div class="conf-box" id="detConf">
+        <em style="color:#a0aec0">Loading...</em>
+      </div>
+    </div>
+
+    <!-- Monthly Highlights -->
+    <div class="det-section" id="hlSection" style="display:none">
+      <div class="det-section-title"><span>⭐</span> Monthly Highlights</div>
+      <ul class="highlight-list" id="hlList"></ul>
+    </div>
+
+    <!-- Recommendations -->
+    <div class="det-section">
+      <div class="det-section-title"><span>💡</span> Recommendations</div>
+      <div id="recArea">
+        <button class="b-purple" id="btnRec" onclick="getRecommendations()">
+          ✨ Get AI Recommendations
+        </button>
+      </div>
+    </div>
+
+    <!-- Risk Factors -->
+    <div class="det-section" id="riskSection" style="display:none">
+      <div class="det-section-title"><span>⚠️</span> Risk Factors</div>
+      <ul class="risk-list" id="riskList"></ul>
+    </div>
+
+    <div style="font-size:.75rem;color:#cbd5e0;margin-top:1rem" id="tokenInfo"></div>
   </div>
 </div>
 
 <script>
-const API   = 'http://localhost:4000/api';
-const MO    = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-let selectedFile = null;
+const API  = 'http://localhost:4000/api';
+const MO   = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const MOS  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// ── Drop zone ─────────────────────────────────────────────────
-const dz = document.getElementById('dropZone');
-dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', ()  => dz.classList.remove('dragover'));
-dz.addEventListener('drop',      e  => { e.preventDefault(); dz.classList.remove('dragover'); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
-document.getElementById('fileInput').addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+let selectedFile = null;
+let currentDetailRow = null;   // the forecast row being viewed
+
+// ── Drop zone ──────────────────────────────────────────────
+const dz = document.getElementById('dz');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('over'));
+dz.addEventListener('drop',      e  => { e.preventDefault(); dz.classList.remove('over'); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+document.getElementById('fi').addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
 
 function setFile(f) {
   selectedFile = f;
-  document.getElementById('fileName').textContent = f.name;
+  document.getElementById('fName').textContent = f.name;
   document.getElementById('fileChosen').style.display = 'block';
-  document.getElementById('btnUpload').disabled = false;
-  hideStatus();
+  document.getElementById('btnUp').disabled = false;
+  document.getElementById('uMsg').style.display = 'none';
 }
 
-// ── Upload ────────────────────────────────────────────────────
+// ── Upload ─────────────────────────────────────────────────
 async function uploadFile() {
   if (!selectedFile) return;
-  const btn = document.getElementById('btnUpload');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Uploading...';
-  showProgress(30);
-  showStatus('Uploading and processing...', 'info');
-
-  const fd = new FormData();
-  fd.append('file', selectedFile);
-
+  const btn = document.getElementById('btnUp');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Uploading...';
+  prog(30); showMsg('Uploading...', 'inf');
+  const fd = new FormData(); fd.append('file', selectedFile);
   try {
-    showProgress(60);
+    prog(65);
     const res  = await fetch(`${API}/upload`, { method: 'POST', body: fd });
     const json = await res.json();
-    showProgress(100);
-    if (!res.ok) throw new Error(json.error || 'Upload failed');
-
-    document.getElementById('statRows').textContent     = json.rowsRead.toLocaleString();
-    document.getElementById('statUpserted').textContent = json.upserted;
-    document.getElementById('statsRow').style.display   = 'flex';
-    showStatus(`✅ ${json.rowsRead.toLocaleString()} rows read — ${json.upserted} records saved!`, 'success');
+    prog(100);
+    if (!res.ok) throw new Error(json.error);
+    document.getElementById('sRows').textContent = json.rowsRead.toLocaleString();
+    document.getElementById('sUp').textContent   = json.upserted;
+    document.getElementById('stats').style.display = 'flex';
+    showMsg(`✅ ${json.rowsRead.toLocaleString()} rows read, ${json.upserted} records saved!`, 'ok');
     await loadHistTable();
-  } catch (err) {
-    showStatus('❌ ' + err.message, 'error');
-  } finally {
-    btn.disabled = false; btn.innerHTML = 'Upload Excel';
-    setTimeout(hideProgress, 1000);
-  }
+  } catch (e) { showMsg('❌ ' + e.message, 'err'); }
+  finally { btn.disabled = false; btn.innerHTML = 'Upload Excel'; setTimeout(()=>prog(0,true),1000); }
 }
 
-// ── Historical table ───────────────────────────────────────────
+// ── Tab switching ──────────────────────────────────────────
+function switchTab(n) {
+  ['pane1','pane2'].forEach((p,i) => {
+    document.getElementById(p).classList.toggle('active', i+1 === n);
+  });
+  document.getElementById('t1').className = n===1 ? 'tab-btn active' : 'tab-btn';
+  document.getElementById('t2').className = n===2 ? 'tab-btn active-purple active' : 'tab-btn active-purple';
+  document.getElementById('t2').style.color = n===2 ? '#6b46c1' : '#9f7aea';
+  document.getElementById('t2').style.borderBottomColor = n===2 ? '#6b46c1' : 'transparent';
+}
+
+// ── Historical table ───────────────────────────────────────
 async function loadHistTable() {
-  const tbody = document.getElementById('histBody');
-  tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Loading...</td></tr>';
+  const tb = document.getElementById('histBody');
+  tb.innerHTML = `<tr><td colspan="15" class="empty">Loading...</td></tr>`;
   try {
-    const res  = await fetch(`${API}/upload/data`);
-    const json = await res.json();
-    const rows = json.data || [];
-    document.getElementById('statTable').textContent    = rows.length;
-    document.getElementById('statsRow').style.display   = 'flex';
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Koi data nahi mila</td></tr>'; return; }
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td><strong>${r.cust_old}</strong></td>
-        <td>${r.fiscvarnt}</td>
-        <td>${r.year}</td>
-        ${MO.map(m => { const v = parseFloat(r[m])||0; return `<td class="num ${v<0?'neg':'pos'}">${v===0?'–':fmt(v)}</td>`; }).join('')}
-      </tr>`).join('');
-  } catch {
-    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:red;padding:2rem">❌ API se connect nahi hua. npm start run karo.</td></tr>';
-  }
+    const j = await (await fetch(`${API}/upload/data`)).json();
+    const rows = j.data || [];
+    document.getElementById('sTot').textContent = rows.length;
+    document.getElementById('stats').style.display = 'flex';
+    tb.innerHTML = rows.length
+      ? rows.map(r => `<tr>
+          <td><strong>${esc(r.cust_old)}</strong></td>
+          <td>${esc(r.fiscvarnt)}</td><td>${r.year}</td>
+          ${MO.map(m => { const v=pf(r[m]); return `<td class="r ${v<0?'neg':'pos'}">${v===0?'–':fmt(v)}</td>`; }).join('')}
+        </tr>`).join('')
+      : `<tr><td colspan="15" class="empty">Koi data nahi mila</td></tr>`;
+  } catch { tb.innerHTML = `<tr><td colspan="15" class="empty" style="color:red">❌ API connect error. npm start run karo.</td></tr>`; }
 }
 
-// ── AI Forecast generation (SSE) ────────────────────────────────
+// ── Generate AI Forecast (SSE) ─────────────────────────────
 function generateForecast() {
-  const btn = document.getElementById('btnForecast');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner spinner-purple"></span>Claude analyzing...';
+  const btn = document.getElementById('btnFc');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Claude analyzing...';
+  const log = document.getElementById('aiLog');
+  log.style.display = 'block'; log.innerHTML = '';
 
-  const logEl = document.getElementById('aiLog');
-  logEl.style.display = 'block';
-  logEl.innerHTML = '';
-  document.getElementById('forecastResult').style.display = 'none';
-
-  function addLog(cls, text) {
-    logEl.innerHTML += `<div class="log-line ${cls}">${escHtml(text)}</div>`;
-    logEl.scrollTop = logEl.scrollHeight;
+  function lg(cls, txt) {
+    log.innerHTML += `<div class="${cls}">${esc(txt)}</div>`;
+    log.scrollTop = log.scrollHeight;
   }
-
-  const es = new EventSource(`${API}/forecast/generate`);
-
-  // Override: EventSource is GET-only; use fetch with SSE reader instead
-  es.close(); // close immediately, use fetch below
 
   fetchSSE(`${API}/forecast/generate`, {
-    onStatus:  d => addLog('log-step',  d.msg),
-    onThinking:d => addLog('log-think', `🧠 ${d.msg}`),
-    onError:   d => { addLog('log-err', '❌ ' + d.msg); btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast'; },
-    onComplete:d => {
-      addLog('log-step', '🎉 Forecast complete!');
+    status:   d => lg('lg-s', d.msg),
+    thinking: d => lg('lg-t', '🧠 ' + d.msg),
+    error:    d => { lg('lg-e', '❌ ' + d.msg); btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast'; },
+    complete: d => {
+      lg('lg-s', '🎉 Done!');
       btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast';
-      renderForecast(d.forecast, d.forecastYear, d.tokens);
+      renderForecastTable(d.forecast?.forecasts || []);
     }
   });
 }
 
-// Fetch-based SSE (POST support)
-function fetchSSE(url, handlers) {
-  fetch(url, { method: 'POST', headers: { 'Accept': 'text/event-stream' } })
-    .then(res => {
-      const reader = res.body.getReader();
-      const dec    = new TextDecoder();
-      let   buf    = '';
+// ── Load saved forecast ────────────────────────────────────
+async function loadForecastTab() {
+  try {
+    const j = await (await fetch(`${API}/forecast/latest`)).json();
+    if (!j.data?.length) { alert('No saved forecast. Generate one first.'); return; }
+    renderForecastTable(j.data.map(r => ({
+      ...r,
+      key_insights: parseJ(r.key_insights),
+      risk_factors: parseJ(r.risk_factors),
+    })));
+    document.getElementById('aiLog').style.display = 'block';
+    document.getElementById('aiLog').innerHTML = '<div class="lg-s">✅ Forecast loaded from DB</div>';
+  } catch (e) { alert('Error: ' + e.message); }
+}
 
-      function pump() {
+// ── Render forecast rows in Tab 2 ─────────────────────────
+function renderForecastTable(rows) {
+  const tb = document.getElementById('fcBody');
+  if (!rows.length) { tb.innerHTML = `<tr><td colspan="18" class="empty">No forecast data</td></tr>`; return; }
+
+  tb.innerHTML = rows.map(f => {
+    const gc = f.yoy_growth_pct >= 0 ? 'grow-up' : 'grow-dn';
+    const gs = f.yoy_growth_pct >= 0 ? '+' : '';
+    const bc = f.confidence === 'high' ? 'bh' : f.confidence === 'medium' ? 'bm' : 'bl';
+    const dataAttr = `data-row='${esc(JSON.stringify(f))}'`;
+    return `<tr class="fc-row" onclick="openDetail(this)" ${dataAttr}>
+      <td><strong>${esc(f.cust_old)}</strong></td>
+      <td>${esc(f.fiscvarnt)}</td>
+      <td>${f.forecast_year}</td>
+      ${MO.map(m => `<td class="r pos">${fmt(pf(f[m]))}</td>`).join('')}
+      <td class="r" style="font-weight:700">${fmt(pf(f.total_forecast))}</td>
+      <td class="r ${gc}">${gs}${Number(f.yoy_growth_pct).toFixed(1)}%</td>
+      <td style="text-align:center">
+        <span class="badge ${bc}">${(f.confidence||'–').toUpperCase()}</span>
+        <span class="link-hint">→</span>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Open detail view ───────────────────────────────────────
+function openDetail(tr) {
+  const row = JSON.parse(tr.getAttribute('data-row'));
+  currentDetailRow = row;
+
+  // Header
+  document.getElementById('detTitle').textContent = `${row.cust_old} — Forecast ${row.forecast_year}`;
+  document.getElementById('detSub').textContent   = `Fiscal Variant: ${row.fiscvarnt}  |  YoY Growth: ${Number(row.yoy_growth_pct||0).toFixed(1)}%`;
+
+  const bc = row.confidence === 'high' ? 'bh' : row.confidence === 'medium' ? 'bm' : 'bl';
+  const badge = document.getElementById('detBadge');
+  badge.textContent = (row.confidence||'–').toUpperCase(); badge.className = `badge ${bc}`;
+
+  // Monthly bars
+  const maxVal = Math.max(...MO.map(m => pf(row[m])), 1);
+  document.getElementById('barGrid').innerHTML = MO.map((m, i) => {
+    const v   = pf(row[m]);
+    const pct = Math.max((v / maxVal) * 100, 0).toFixed(1);
+    return `<div class="bar-item">
+      <div class="bar-label"><span>${MOS[i]}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div class="bar-val">₹${fmt(v)}</div>
+    </div>`;
+  }).join('');
+
+  // Pre-fill stored reasoning
+  const insights = parseJ(row.key_insights);
+  const risks    = parseJ(row.risk_factors);
+
+  document.getElementById('detReason').innerHTML = [
+    row.seasonal_pattern ? `<strong>Seasonal Pattern:</strong> ${esc(row.seasonal_pattern)}<br><br>` : '',
+    row.executive_summary? `<strong>Executive Summary:</strong> ${esc(row.executive_summary)}<br><br>` : '',
+    insights.length ? `<strong>Key Insights:</strong><ul style="padding-left:1.2rem;margin-top:.3rem">${insights.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>` : '',
+  ].join('') || '<em style="color:#a0aec0">Click "Get AI Recommendations" for detailed analysis</em>';
+
+  document.getElementById('detConf').innerHTML = row.methodology
+    ? `<strong>Methodology:</strong> ${esc(row.methodology)}`
+    : '<em style="color:#a0aec0">Click "Get AI Recommendations" to load confidence explanation...</em>';
+
+  // Risks
+  if (risks.length) {
+    document.getElementById('riskList').innerHTML = risks.map(r => `<li class="risk-item">${esc(r)}</li>`).join('');
+    document.getElementById('riskSection').style.display = 'block';
+  } else {
+    document.getElementById('riskSection').style.display = 'none';
+  }
+
+  // Reset rec area
+  document.getElementById('hlSection').style.display = 'none';
+  document.getElementById('recArea').innerHTML = `<button class="b-purple" id="btnRec" onclick="getRecommendations()">✨ Get AI Recommendations</button>`;
+  document.getElementById('tokenInfo').textContent = '';
+
+  // Show detail, hide main
+  document.getElementById('mainView').style.display = 'none';
+  const dv = document.getElementById('detailView');
+  dv.style.display = 'block';
+  document.getElementById('detailCard').className = 'card page-enter';
+  window.scrollTo(0, 0);
+}
+
+function closeDetail() {
+  document.getElementById('detailView').style.display = 'none';
+  document.getElementById('mainView').style.display   = 'block';
+  switchTab(2);
+  window.scrollTo(0, 0);
+}
+
+// ── Get AI Recommendations (Claude Haiku — fast) ───────────
+async function getRecommendations() {
+  const row = currentDetailRow;
+  if (!row) return;
+
+  const btn = document.getElementById('btnRec');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Claude Haiku analyzing...';
+
+  // Update placeholders to loading state
+  document.getElementById('detReason').innerHTML = '<span class="spin"></span> Loading reasoning...';
+  document.getElementById('detConf').innerHTML   = '<span class="spin"></span> Loading confidence explanation...';
+
+  try {
+    const res  = await fetch(`${API}/forecast/recommend`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ cust_old: row.cust_old, fiscvarnt: row.fiscvarnt, forecast_year: row.forecast_year })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    // Reasoning
+    document.getElementById('detReason').textContent = data.reasoning_summary || '–';
+
+    // Confidence explanation
+    document.getElementById('detConf').textContent = data.confidence_explanation || '–';
+
+    // Monthly highlights
+    const hl = data.monthly_highlights || [];
+    if (hl.length) {
+      document.getElementById('hlList').innerHTML = hl.map(h => `
+        <li class="hl-item">
+          <span class="hl-month">${esc(h.month)}</span>
+          <span class="hl-val">₹${fmt(h.forecast_value||0)}</span>
+          <span class="hl-note">${esc(h.note)}</span>
+        </li>`).join('');
+      document.getElementById('hlSection').style.display = 'block';
+    }
+
+    // Recommendations
+    const recs = data.recommendations || [];
+    document.getElementById('recArea').innerHTML = recs.length
+      ? `<ul class="rec-list">${recs.map(r => `
+          <li class="rec-item ${r.priority==='medium'?'med':r.priority==='low'?'low':''}">
+            <span class="rec-prio prio-${r.priority||'low'}">${(r.priority||'low').toUpperCase()}</span>
+            <div class="rec-text">
+              <div class="rec-action">${esc(r.action)}</div>
+              <div class="rec-why">${esc(r.rationale)}</div>
+            </div>
+          </li>`).join('')}</ul>`
+      : '<em style="color:#a0aec0">No recommendations returned.</em>';
+
+    // Risk factors (update if came from API)
+    document.getElementById('tokenInfo').textContent =
+      `Claude Haiku — Input: ${data.tokens?.input?.toLocaleString()} tokens | Output: ${data.tokens?.output?.toLocaleString()} tokens`;
+
+  } catch (e) {
+    document.getElementById('recArea').innerHTML = `<span style="color:red">❌ ${esc(e.message)}</span>`;
+    document.getElementById('detReason').innerHTML = '<em style="color:#a0aec0">Error loading reasoning.</em>';
+    document.getElementById('detConf').innerHTML   = '<em style="color:#a0aec0">Error loading confidence.</em>';
+  }
+}
+
+// ── Fetch-based SSE (supports POST) ───────────────────────
+function fetchSSE(url, handlers) {
+  fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream' } })
+    .then(res => {
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      (function pump() {
         reader.read().then(({ done, value }) => {
           if (done) return;
           buf += dec.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop();                     // keep incomplete chunk
-          parts.forEach(chunk => {
-            const lines  = chunk.split('\n');
-            let   event  = 'message', data = '';
-            lines.forEach(l => {
-              if (l.startsWith('event: ')) event = l.slice(7).trim();
-              if (l.startsWith('data: '))  data  = l.slice(6).trim();
+          buf.split('\n\n').slice(0, -1).forEach(chunk => {
+            let ev = 'message', data = '';
+            chunk.split('\n').forEach(l => {
+              if (l.startsWith('event: ')) ev   = l.slice(7).trim();
+              if (l.startsWith('data: '))  data = l.slice(6).trim();
             });
-            if (!data) return;
-            try {
-              const payload = JSON.parse(data);
-              if (event === 'status'   && handlers.onStatus)   handlers.onStatus(payload);
-              if (event === 'thinking' && handlers.onThinking) handlers.onThinking(payload);
-              if (event === 'error'    && handlers.onError)    handlers.onError(payload);
-              if (event === 'complete' && handlers.onComplete) handlers.onComplete(payload);
-            } catch(_) {}
+            try { if (data) handlers[ev]?.(JSON.parse(data)); } catch(_){}
           });
+          buf = buf.split('\n\n').slice(-1)[0];
           pump();
         });
-      }
-      pump();
+      })();
     })
-    .catch(err => handlers.onError?.({ msg: err.message }));
+    .catch(e => handlers.error?.({ msg: e.message }));
 }
 
-// ── Render forecast results ────────────────────────────────────
-function renderForecast(data, forecastYear, tokens) {
-  document.getElementById('forecastResult').style.display = 'block';
+// ── Load all ───────────────────────────────────────────────
+async function loadAll() { await loadHistTable(); await loadForecastTab(); }
 
-  // Executive summary
-  document.getElementById('execSummary').innerHTML =
-    `<strong>📌 Executive Summary:</strong><br>${escHtml(data.executive_summary)}`;
-
-  // Methodology
-  document.getElementById('methodBox').innerHTML =
-    `<strong>📐 Methodology:</strong> ${escHtml(data.methodology)}`;
-
-  // Table title
-  document.getElementById('forecastTableTitle').textContent =
-    `📅 Forecast: Year ${forecastYear}`;
-
-  // Forecast rows
-  const tbody = document.getElementById('forecastBody');
-  tbody.innerHTML = (data.forecasts || []).map(f => {
-    const growthCls = f.yoy_growth_pct >= 0 ? 'growth-up' : 'growth-down';
-    const growthSign= f.yoy_growth_pct >= 0 ? '+' : '';
-    return `<tr>
-      <td><strong>${f.cust_old}</strong></td>
-      <td>${f.fiscvarnt}</td>
-      <td>${f.forecast_year}</td>
-      ${MO.map(m => `<td class="num pos">${fmt(f[m])}</td>`).join('')}
-      <td class="num" style="font-weight:700">${fmt(f.total_forecast)}</td>
-      <td class="num ${growthCls}">${growthSign}${Number(f.yoy_growth_pct).toFixed(1)}%</td>
-      <td style="text-align:center"><span class="badge badge-${f.confidence}">${f.confidence.toUpperCase()}</span></td>
-    </tr>`;
-  }).join('');
-
-  // Key insights (from first forecast segment)
-  const insights = data.forecasts?.[0]?.key_insights || [];
-  document.getElementById('insightList').innerHTML =
-    insights.map(i => `<li>${escHtml(i)}</li>`).join('');
-
-  // Risk factors
-  document.getElementById('riskList').innerHTML =
-    (data.risk_factors || []).map(r => `<li>${escHtml(r)}</li>`).join('');
-
-  // Token usage
-  if (tokens) {
-    document.getElementById('tokenInfo').textContent =
-      `Claude Opus 5.5 — Input: ${tokens.input?.toLocaleString()} tokens | Output: ${tokens.output?.toLocaleString()} tokens`;
-  }
-}
-
-// ── Load saved forecast ────────────────────────────────────────
-async function loadForecastTable() {
-  try {
-    const res  = await fetch(`${API}/forecast/latest`);
-    const json = await res.json();
-    if (!json.data?.length) { alert('No saved forecast found. Generate one first.'); return; }
-
-    // Build a pseudo forecast object from DB rows and render
-    const first = json.data[0];
-    const mockData = {
-      forecasts:         json.data.map(r => ({
-        ...r,
-        key_insights:  typeof r.key_insights  === 'string' ? JSON.parse(r.key_insights)  : (r.key_insights || []),
-        risk_factors:  typeof r.risk_factors   === 'string' ? JSON.parse(r.risk_factors)   : (r.risk_factors || []),
-      })),
-      executive_summary: first.executive_summary || '–',
-      methodology:       first.methodology       || '–',
-      risk_factors:      typeof first.risk_factors === 'string' ? JSON.parse(first.risk_factors) : (first.risk_factors || []),
-    };
-    document.getElementById('aiLog').style.display = 'block';
-    document.getElementById('aiLog').innerHTML = `<div class="log-line log-step">✅ Loaded saved forecast from DB</div>`;
-    renderForecast(mockData, first.forecast_year, null);
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
-}
-
-// ── Helpers ────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────
 function fmt(v) { return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function showStatus(msg, type) { const el = document.getElementById('statusMsg'); el.textContent = msg; el.className = `status ${type}`; el.style.display = 'block'; }
-function hideStatus()          { document.getElementById('statusMsg').style.display = 'none'; }
-function showProgress(pct)     { document.getElementById('progressWrap').style.display = 'block'; document.getElementById('progressBar').style.width = pct + '%'; }
-function hideProgress()        { document.getElementById('progressWrap').style.display = 'none'; document.getElementById('progressBar').style.width = '0%'; }
+function pf(v)  { return parseFloat(v) || 0; }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;'); }
+function parseJ(v) { if (Array.isArray(v)) return v; try { return JSON.parse(v)||[]; } catch { return []; } }
+function showMsg(t, cls) { const el=document.getElementById('uMsg'); el.textContent=t; el.className='msg '+cls; el.style.display='block'; }
+function prog(p, hide) {
+  const w=document.getElementById('pw'), b=document.getElementById('pb');
+  if (hide) { w.style.display='none'; b.style.width='0'; return; }
+  w.style.display='block'; b.style.width=p+'%';
+}
 
-// Auto-load on page open
+// Auto-load on open
 loadHistTable();
 </script>
 </body>

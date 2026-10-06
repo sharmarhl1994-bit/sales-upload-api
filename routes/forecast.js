@@ -370,4 +370,141 @@ router.get('/latest', async (_req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured tool for deep-dive recommendation (Haiku — fast & cheap)
+// ─────────────────────────────────────────────────────────────────────────────
+const RECOMMEND_TOOL = {
+  name: 'submit_recommendation',
+  description: 'Submit deep-dive reasoning, confidence breakdown, and actionable recommendations for a sales forecast row.',
+  strict: true,
+  input_schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['reasoning_summary', 'confidence_explanation', 'recommendations', 'monthly_highlights'],
+    properties: {
+      reasoning_summary: {
+        type: 'string',
+        description: '3-5 sentences explaining WHY these forecast numbers were derived from the historical data.'
+      },
+      confidence_explanation: {
+        type: 'string',
+        description: 'Explain specifically what makes the confidence HIGH/MEDIUM/LOW for this forecast.'
+      },
+      recommendations: {
+        type: 'array',
+        minItems: 3,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['action', 'rationale', 'priority'],
+          properties: {
+            action:    { type: 'string', description: 'Specific actionable recommendation for the sales/business team' },
+            rationale: { type: 'string', description: 'Why this action is important based on the forecast data' },
+            priority:  { type: 'string', enum: ['high', 'medium', 'low'] }
+          }
+        }
+      },
+      monthly_highlights: {
+        type: 'array',
+        description: 'Call out 3-4 notable months (peak, trough, inflection points)',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['month', 'forecast_value', 'note'],
+          properties: {
+            month:          { type: 'string' },
+            forecast_value: { type: 'number' },
+            note:           { type: 'string', description: 'Why this month is noteworthy' }
+          }
+        }
+      }
+    }
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/forecast/recommend
+// Body: { cust_old, fiscvarnt, forecast_year }
+// Returns deep reasoning + recommendations using Claude Haiku (fast)
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/recommend', async (req, res) => {
+  const { cust_old, fiscvarnt, forecast_year } = req.body || {};
+
+  if (!cust_old || !fiscvarnt || !forecast_year) {
+    return res.status(400).json({ error: 'cust_old, fiscvarnt, forecast_year are required.' });
+  }
+
+  try {
+    // Fetch the stored forecast row
+    const { rows: fRows } = await pool.query(
+      `SELECT * FROM forecasts
+       WHERE cust_old=$1 AND fiscvarnt=$2 AND forecast_year=$3 LIMIT 1`,
+      [cust_old, fiscvarnt, Number(forecast_year)]
+    );
+    if (!fRows.length) return res.status(404).json({ error: 'Forecast not found. Generate it first.' });
+
+    // Fetch the historical baseline
+    const { rows: hRows } = await pool.query(
+      `SELECT * FROM past_sales
+       WHERE cust_old=$1 AND fiscvarnt=$2 ORDER BY year`,
+      [cust_old, fiscvarnt]
+    );
+
+    const f = fRows[0];
+
+    // Build compact context for Haiku
+    const histSummary = hRows.map(r =>
+      `${r.year}: ${MONTHS.map(m => `${MONTH_SHORT[MONTHS.indexOf(m)]}=₹${Math.round(parseFloat(r[m])||0).toLocaleString('en-IN')}`).join(', ')}`
+    ).join('\n');
+
+    const fcstSummary = MONTHS
+      .map((m, i) => `${MONTH_SHORT[i]}: ₹${Math.round(parseFloat(f[m])||0).toLocaleString('en-IN')}`)
+      .join(' | ');
+
+    const prompt = `You are a senior sales analyst. Analyze this forecast and provide actionable business intelligence.
+
+CUSTOMER: ${cust_old}  |  FISCAL VARIANT: ${fiscvarnt}  |  FORECAST YEAR: ${forecast_year}
+CONFIDENCE: ${f.confidence?.toUpperCase()}
+YoY GROWTH FORECAST: ${Number(f.yoy_growth_pct).toFixed(2)}%
+
+HISTORICAL DATA:
+${histSummary}
+
+${forecast_year} FORECAST (monthly):
+${fcstSummary}
+TOTAL: ₹${Math.round(parseFloat(f.total_forecast)||0).toLocaleString('en-IN')}
+
+SEASONAL PATTERN NOTED: ${f.seasonal_pattern || 'N/A'}
+METHODOLOGY USED: ${f.methodology || 'N/A'}
+
+Provide deep reasoning, confidence explanation, and 3-5 specific business recommendations.
+Call the submit_recommendation tool with your analysis.`;
+
+    const response = await ai.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      system:     'You are a sharp, data-driven sales analytics expert. Always call the submit_recommendation tool.',
+      messages:   [{ role: 'user', content: prompt }],
+      tools:      [RECOMMEND_TOOL],
+    });
+
+    const toolBlock = response.content.find(b => b.type === 'tool_use' && b.name === 'submit_recommendation');
+    if (!toolBlock) {
+      const fallback = response.content.find(b => b.type === 'text')?.text || 'No recommendation generated.';
+      return res.status(500).json({ error: fallback.slice(0, 300) });
+    }
+
+    res.json({
+      cust_old, fiscvarnt, forecast_year,
+      confidence: f.confidence,
+      ...toolBlock.input,
+      tokens: { input: response.usage.input_tokens, output: response.usage.output_tokens },
+    });
+
+  } catch (err) {
+    console.error('[recommend] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
