@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Past Sales Upload</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f0f4f8;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
+      padding: 2rem;
+      max-width: 1100px;
+      margin: 0 auto 2rem auto;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      color: #1a202c;
+      margin-bottom: 0.3rem;
+    }
+
+    .subtitle {
+      color: #718096;
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2.5px dashed #90cdf4;
+      border-radius: 10px;
+      background: #ebf8ff;
+      padding: 2.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      background: #bee3f8;
+      border-color: #3182ce;
+    }
+    .drop-zone input[type="file"] { display: none; }
+
+    .drop-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    .drop-text { color: #2b6cb0; font-weight: 600; font-size: 1rem; }
+    .drop-hint { color: #718096; font-size: 0.8rem; margin-top: 0.3rem; }
+
+    .file-chosen {
+      margin-top: 1rem;
+      padding: 0.6rem 1rem;
+      background: #e9f7ef;
+      border-radius: 6px;
+      color: #276749;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; }
+
+    button {
+      padding: 0.65rem 1.8rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-upload { background: #3182ce; color: #fff; }
+    .btn-upload:hover:not(:disabled) { background: #2b6cb0; }
+
+    .btn-refresh { background: #e2e8f0; color: #2d3748; }
+    .btn-refresh:hover { background: #cbd5e0; }
+
+    /* Progress bar */
+    .progress-wrap {
+      margin-top: 1rem;
+      background: #e2e8f0;
+      border-radius: 99px;
+      height: 8px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #3182ce, #63b3ed);
+      border-radius: 99px;
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    /* Status message */
+    .status {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      display: none;
+    }
+    .status.success { background: #c6f6d5; color: #22543d; }
+    .status.error   { background: #fed7d7; color: #742a2a; }
+    .status.info    { background: #bee3f8; color: #2a4365; }
+
+    /* Stats row */
+    .stats-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+      flex-wrap: wrap;
+      display: none;
+    }
+    .stat-box {
+      flex: 1;
+      min-width: 140px;
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+      text-align: center;
+    }
+    .stat-num { font-size: 1.6rem; font-weight: 700; color: #2b6cb0; }
+    .stat-label { font-size: 0.78rem; color: #718096; margin-top: 0.2rem; }
+
+    /* Table */
+    .table-section { overflow-x: auto; }
+
+    .table-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #2d3748;
+      margin-bottom: 1rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    thead th {
+      background: #2b6cb0;
+      color: #fff;
+      padding: 0.7rem 0.8rem;
+      text-align: center;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+    }
+    thead th:first-child { border-radius: 8px 0 0 0; }
+    thead th:last-child  { border-radius: 0 8px 0 0; }
+
+    tbody tr:nth-child(even) { background: #f7fafc; }
+    tbody tr:hover { background: #ebf8ff; }
+    tbody td {
+      padding: 0.6rem 0.8rem;
+      border-bottom: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.neg { color: #c53030; }
+    td.pos { color: #276749; }
+
+    .empty-msg {
+      text-align: center;
+      color: #a0aec0;
+      padding: 2rem;
+      font-size: 0.9rem;
+    }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid #fff;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Upload Card -->
+<div class="card">
+  <h1>📊 Past Sales Upload</h1>
+  <p class="subtitle">Excel file upload karo → data automatically PostgreSQL mein save ho jayega</p>
+
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <input type="file" id="fileInput" accept=".xlsx,.xls" />
+    <div class="drop-icon">📁</div>
+    <div class="drop-text">Click karo ya yahan Excel file drop karo</div>
+    <div class="drop-hint">Supported: .xlsx, .xls &nbsp;|&nbsp; Max size: 50 MB</div>
+  </div>
+
+  <div class="file-chosen" id="fileChosen">✅ File selected: <strong id="fileName"></strong></div>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <!-- Status -->
+  <div class="status" id="statusMsg"></div>
+
+  <!-- Stats -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-box">
+      <div class="stat-num" id="statRows">–</div>
+      <div class="stat-label">Excel Rows Read</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statUpserted">–</div>
+      <div class="stat-label">Records Saved</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statTable">–</div>
+      <div class="stat-label">Total DB Records</div>
+    </div>
+  </div>
+
+  <!-- Buttons -->
+  <div class="btn-row">
+    <button class="btn-upload" id="btnUpload" onclick="uploadFile()" disabled>
+      Upload Excel
+    </button>
+    <button class="btn-refresh" onclick="loadTable()">
+      🔄 Refresh Table
+    </button>
+  </div>
+</div>
+
+<!-- Table Card -->
+<div class="card">
+  <div class="table-title">📋 Saved Sales Data</div>
+  <div class="table-section">
+    <table id="salesTable">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Fisc Var</th>
+          <th>Year</th>
+          <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
+          <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
+          <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="15" class="empty-msg">Pehle data upload karo ya "Refresh Table" click karo</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const API = 'http://localhost:4000/api';
+  const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+  let selectedFile = null;
+
+  // ── Drag & Drop ──────────────────────────────────────────────
+  const dropZone = document.getElementById('dropZone');
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    if (e.target.files[0]) setFile(e.target.files[0]);
+  });
+
+  function setFile(f) {
+    selectedFile = f;
+    document.getElementById('fileName').textContent = f.name;
+    document.getElementById('fileChosen').style.display = 'block';
+    document.getElementById('btnUpload').disabled = false;
+    hideStatus();
+  }
+
+  // ── Upload ───────────────────────────────────────────────────
+  async function uploadFile() {
+    if (!selectedFile) return;
+
+    const btn = document.getElementById('btnUpload');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Uploading...';
+
+    showProgress(30);
+    showStatus('Uploading aur processing ho raha hai...', 'info');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+      showProgress(60);
+      const res  = await fetch(`${API}/upload`, { method: 'POST', body: formData });
+      const json = await res.json();
+      showProgress(100);
+
+      if (!res.ok) throw new Error(json.error || 'Upload failed');
+
+      document.getElementById('statRows').textContent     = json.rowsRead.toLocaleString();
+      document.getElementById('statUpserted').textContent = json.upserted;
+      document.getElementById('statsRow').style.display   = 'flex';
+
+      showStatus(`✅ Upload successful! ${json.rowsRead.toLocaleString()} rows read, ${json.upserted} records saved to DB.`, 'success');
+      await loadTable();
+
+    } catch (err) {
+      showStatus('❌ Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = 'Upload Excel';
+      setTimeout(() => hideProgress(), 1000);
+    }
+  }
+
+  // ── Load Table ───────────────────────────────────────────────
+  async function loadTable() {
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = '<tr><td colspan="15" class="empty-msg">Loading...</td></tr>';
+
+    try {
+      const res  = await fetch(`${API}/upload/data`);
+      const json = await res.json();
+      const rows = json.data || [];
+
+      document.getElementById('statTable').textContent = rows.length;
+      document.getElementById('statsRow').style.display = 'flex';
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="15" class="empty-msg">Koi data nahi mila</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td><strong>${r.cust_old}</strong></td>
+          <td>${r.fiscvarnt}</td>
+          <td>${r.year}</td>
+          ${MONTHS.map(m => {
+            const v = parseFloat(r[m]) || 0;
+            const cls = v < 0 ? 'num neg' : 'num pos';
+            return `<td class="${cls}">${v === 0 ? '–' : fmt(v)}</td>`;
+          }).join('')}
+        </tr>
+      `).join('');
+
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="15" class="empty-msg">❌ Server se connect nahi hua. API chal rahi hai? (localhost:4000)</td></tr>`;
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────
+  function fmt(v) {
+    return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  }
+
+  function showStatus(msg, type) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg;
+    el.className = `status ${type}`;
+    el.style.display = 'block';
+  }
+
+  function hideStatus() {
+    document.getElementById('statusMsg').style.display = 'none';
+  }
+
+  function showProgress(pct) {
+    document.getElementById('progressWrap').style.display = 'block';
+    document.getElementById('progressBar').style.width = pct + '%';
+  }
+
+  function hideProgress() {
+    document.getElementById('progressWrap').style.display = 'none';
+    document.getElementById('progressBar').style.width = '0%';
+  }
+
+  // Auto-load table on page open
+  loadTable();
+</script>
+</body>
+</html>
