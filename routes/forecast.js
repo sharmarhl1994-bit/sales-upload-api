@@ -264,14 +264,13 @@ router.post('/generate', async (req, res) => {
     emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
     // ── Step 3: Call Claude Opus 5.5 with streaming ─────────
-    emit('status', { step: 3, msg: '🤖 Claude Opus 5.5 is analyzing patterns (this may take 30–90 seconds)...' });
-    emit('thinking', { msg: 'Initializing AI analysis with adaptive thinking...' });
+    emit('status', { step: 3, msg: '🤖 Claude Sonnet 5.5 is analyzing patterns (this may take 20–60 seconds)...' });
+    emit('thinking', { msg: 'Initializing AI analysis...' });
 
     const msgStream = getAI().messages.stream({
-      model:        'claude-opus-5-5',
-      max_tokens:   64000,
-      thinking:     { type: 'adaptive', display: 'summarized' },
-      output_config:{ effort: 'high' },
+      model:      'claude-sonnet-5-5',
+      max_tokens: 16000,
+      thinking:   { type: 'adaptive', display: 'summarized' },
       system: `You are an elite sales forecasting analyst with deep expertise in:
 - Time-series decomposition and trend analysis
 - Seasonal pattern recognition and adjustment
