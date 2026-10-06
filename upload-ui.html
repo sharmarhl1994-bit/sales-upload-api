@@ -3,406 +3,454 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Past Sales Upload</title>
+  <title>Past Sales — Upload & AI Forecast</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f0f4f8;
-      min-height: 100vh;
-      padding: 2rem;
-    }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; min-height: 100vh; padding: 2rem; }
 
     .card {
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
-      padding: 2rem;
-      max-width: 1100px;
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.10);
+      padding: 2rem; max-width: 1200px;
       margin: 0 auto 2rem auto;
     }
+    h1  { font-size: 1.6rem; color: #1a202c; margin-bottom: .3rem; }
+    h2  { font-size: 1.2rem; color: #2d3748; margin-bottom: 1rem; }
+    .subtitle { color: #718096; font-size: .9rem; margin-bottom: 1.5rem; }
 
-    h1 {
-      font-size: 1.6rem;
-      color: #1a202c;
-      margin-bottom: 0.3rem;
-    }
-
-    .subtitle {
-      color: #718096;
-      font-size: 0.9rem;
-      margin-bottom: 1.5rem;
-    }
-
-    /* Drop zone */
+    /* ── Drop zone ─────────────────────────────────── */
     .drop-zone {
-      border: 2.5px dashed #90cdf4;
-      border-radius: 10px;
-      background: #ebf8ff;
-      padding: 2.5rem;
-      text-align: center;
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
+      border: 2.5px dashed #90cdf4; border-radius: 10px;
+      background: #ebf8ff; padding: 2.5rem;
+      text-align: center; cursor: pointer;
+      transition: background .2s, border-color .2s;
     }
-    .drop-zone:hover, .drop-zone.dragover {
-      background: #bee3f8;
-      border-color: #3182ce;
-    }
+    .drop-zone:hover,.drop-zone.dragover { background: #bee3f8; border-color: #3182ce; }
     .drop-zone input[type="file"] { display: none; }
-
-    .drop-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    .drop-icon { font-size: 2.5rem; margin-bottom: .5rem; }
     .drop-text { color: #2b6cb0; font-weight: 600; font-size: 1rem; }
-    .drop-hint { color: #718096; font-size: 0.8rem; margin-top: 0.3rem; }
+    .drop-hint { color: #718096; font-size: .8rem; margin-top: .3rem; }
+    .file-chosen { margin-top: 1rem; padding: .6rem 1rem; background: #e9f7ef; border-radius: 6px; color: #276749; font-size: .9rem; display: none; }
 
-    .file-chosen {
-      margin-top: 1rem;
-      padding: 0.6rem 1rem;
-      background: #e9f7ef;
-      border-radius: 6px;
-      color: #276749;
-      font-size: 0.9rem;
-      display: none;
-    }
-
-    /* Buttons */
-    .btn-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; }
-
-    button {
-      padding: 0.65rem 1.8rem;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .btn-upload { background: #3182ce; color: #fff; }
-    .btn-upload:hover:not(:disabled) { background: #2b6cb0; }
-
+    /* ── Buttons ──────────────────────────────────── */
+    .btn-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; align-items: center; }
+    button { padding: .65rem 1.8rem; border: none; border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; transition: opacity .2s; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-upload  { background: #3182ce; color: #fff; }
+    .btn-upload:hover:not(:disabled)   { background: #2b6cb0; }
+    .btn-forecast{ background: linear-gradient(135deg,#6b46c1,#9f7aea); color: #fff; }
+    .btn-forecast:hover:not(:disabled) { opacity: .9; }
     .btn-refresh { background: #e2e8f0; color: #2d3748; }
     .btn-refresh:hover { background: #cbd5e0; }
 
-    /* Progress bar */
-    .progress-wrap {
-      margin-top: 1rem;
-      background: #e2e8f0;
-      border-radius: 99px;
-      height: 8px;
-      overflow: hidden;
-      display: none;
-    }
-    .progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #3182ce, #63b3ed);
-      border-radius: 99px;
-      width: 0%;
-      transition: width 0.3s;
-    }
+    /* ── Progress bar ──────────────────────────────── */
+    .progress-wrap { margin-top: 1rem; background: #e2e8f0; border-radius: 99px; height: 8px; overflow: hidden; display: none; }
+    .progress-bar  { height: 100%; background: linear-gradient(90deg,#3182ce,#63b3ed); border-radius: 99px; width: 0%; transition: width .3s; }
 
-    /* Status message */
-    .status {
-      margin-top: 1rem;
-      padding: 0.75rem 1rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      font-weight: 500;
-      display: none;
-    }
+    /* ── Status / alert ────────────────────────────── */
+    .status { margin-top: 1rem; padding: .75rem 1rem; border-radius: 8px; font-size: .9rem; font-weight: 500; display: none; }
     .status.success { background: #c6f6d5; color: #22543d; }
     .status.error   { background: #fed7d7; color: #742a2a; }
     .status.info    { background: #bee3f8; color: #2a4365; }
 
-    /* Stats row */
-    .stats-row {
-      display: flex;
-      gap: 1rem;
-      margin-top: 1.5rem;
-      flex-wrap: wrap;
-      display: none;
-    }
-    .stat-box {
-      flex: 1;
-      min-width: 140px;
-      background: #f7fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 1rem 1.2rem;
-      text-align: center;
-    }
-    .stat-num { font-size: 1.6rem; font-weight: 700; color: #2b6cb0; }
-    .stat-label { font-size: 0.78rem; color: #718096; margin-top: 0.2rem; }
+    /* ── Stat boxes ────────────────────────────────── */
+    .stats-row { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; display: none; }
+    .stat-box  { flex: 1; min-width: 140px; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem 1.2rem; text-align: center; }
+    .stat-num  { font-size: 1.6rem; font-weight: 700; color: #2b6cb0; }
+    .stat-label{ font-size: .78rem; color: #718096; margin-top: .2rem; }
 
-    /* Table */
+    /* ── Tables ────────────────────────────────────── */
     .table-section { overflow-x: auto; }
-
-    .table-title {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: #2d3748;
-      margin-bottom: 1rem;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-    }
-    thead th {
-      background: #2b6cb0;
-      color: #fff;
-      padding: 0.7rem 0.8rem;
-      text-align: center;
-      white-space: nowrap;
-      position: sticky;
-      top: 0;
-    }
-    thead th:first-child { border-radius: 8px 0 0 0; }
-    thead th:last-child  { border-radius: 0 8px 0 0; }
-
+    .table-title { font-size: 1.05rem; font-weight: 700; color: #2d3748; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    thead th { background: #2b6cb0; color: #fff; padding: .7rem .8rem; text-align: center; white-space: nowrap; position: sticky; top: 0; }
+    thead th:first-child { border-radius: 8px 0 0 0; } thead th:last-child { border-radius: 0 8px 0 0; }
     tbody tr:nth-child(even) { background: #f7fafc; }
     tbody tr:hover { background: #ebf8ff; }
-    tbody td {
-      padding: 0.6rem 0.8rem;
-      border-bottom: 1px solid #e2e8f0;
-      white-space: nowrap;
-    }
+    tbody td { padding: .6rem .8rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    td.neg { color: #c53030; }
-    td.pos { color: #276749; }
+    td.neg { color: #c53030; } td.pos { color: #276749; }
 
-    .empty-msg {
-      text-align: center;
-      color: #a0aec0;
-      padding: 2rem;
-      font-size: 0.9rem;
+    /* ── AI Forecast panel ────────────────────────── */
+    .forecast-card { border: 2px solid #9f7aea; }
+    .forecast-card h2 { color: #6b46c1; }
+
+    /* AI progress log */
+    .ai-log {
+      background: #1a1a2e; border-radius: 8px;
+      padding: 1rem; font-family: 'Consolas', monospace;
+      font-size: .82rem; color: #a0aec0;
+      max-height: 200px; overflow-y: auto;
+      margin-top: 1rem; display: none;
     }
+    .ai-log .log-line { padding: .15rem 0; border-bottom: 1px solid #2d2d4e; }
+    .ai-log .log-step { color: #68d391; }
+    .ai-log .log-think{ color: #f6e05e; }
+    .ai-log .log-err  { color: #fc8181; }
+
+    /* Insight pills */
+    .insight-list { list-style: none; padding: 0; }
+    .insight-list li {
+      background: #faf5ff; border-left: 3px solid #9f7aea;
+      padding: .4rem .8rem; margin-bottom: .4rem;
+      border-radius: 0 6px 6px 0; font-size: .85rem; color: #44337a;
+    }
+    .risk-list li { background: #fff5f5; border-left-color: #fc8181; color: #742a2a; }
+
+    /* Confidence badge */
+    .badge { display: inline-block; padding: .25rem .7rem; border-radius: 99px; font-size: .75rem; font-weight: 700; }
+    .badge-high   { background: #c6f6d5; color: #22543d; }
+    .badge-medium { background: #fefcbf; color: #744210; }
+    .badge-low    { background: #fed7d7; color: #742a2a; }
+
+    /* Growth indicator */
+    .growth-up   { color: #276749; font-weight: 700; }
+    .growth-down { color: #c53030; font-weight: 700; }
+
+    /* Forecast header row (purple) */
+    thead.forecast-head th { background: #6b46c1; }
 
     /* Spinner */
     @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner {
-      display: inline-block;
-      width: 16px; height: 16px;
-      border: 2px solid #fff;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
-    }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+    .spinner-purple { border-color: #9f7aea; border-top-color: transparent; }
+
+    /* Summary box */
+    .summary-box { background: #faf5ff; border: 1px solid #d6bcfa; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; font-size: .88rem; color: #44337a; line-height: 1.6; }
+    .method-box  { background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; font-size: .85rem; color: #22543d; }
   </style>
 </head>
 <body>
 
-<!-- Upload Card -->
+<!-- ══════════════════ UPLOAD CARD ══════════════════ -->
 <div class="card">
   <h1>📊 Past Sales Upload</h1>
-  <p class="subtitle">Excel file upload karo → data automatically PostgreSQL mein save ho jayega</p>
+  <p class="subtitle">Upload Excel → data automatically aggregated monthly and saved to PostgreSQL</p>
 
-  <!-- Drop zone -->
   <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
     <input type="file" id="fileInput" accept=".xlsx,.xls" />
     <div class="drop-icon">📁</div>
     <div class="drop-text">Click karo ya yahan Excel file drop karo</div>
     <div class="drop-hint">Supported: .xlsx, .xls &nbsp;|&nbsp; Max size: 50 MB</div>
   </div>
-
   <div class="file-chosen" id="fileChosen">✅ File selected: <strong id="fileName"></strong></div>
 
-  <!-- Progress -->
-  <div class="progress-wrap" id="progressWrap">
-    <div class="progress-bar" id="progressBar"></div>
-  </div>
-
-  <!-- Status -->
+  <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
   <div class="status" id="statusMsg"></div>
 
-  <!-- Stats -->
   <div class="stats-row" id="statsRow">
-    <div class="stat-box">
-      <div class="stat-num" id="statRows">–</div>
-      <div class="stat-label">Excel Rows Read</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-num" id="statUpserted">–</div>
-      <div class="stat-label">Records Saved</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-num" id="statTable">–</div>
-      <div class="stat-label">Total DB Records</div>
-    </div>
+    <div class="stat-box"><div class="stat-num" id="statRows">–</div><div class="stat-label">Excel Rows Read</div></div>
+    <div class="stat-box"><div class="stat-num" id="statUpserted">–</div><div class="stat-label">Records Saved</div></div>
+    <div class="stat-box"><div class="stat-num" id="statTable">–</div><div class="stat-label">Total DB Records</div></div>
   </div>
 
-  <!-- Buttons -->
   <div class="btn-row">
-    <button class="btn-upload" id="btnUpload" onclick="uploadFile()" disabled>
-      Upload Excel
-    </button>
-    <button class="btn-refresh" onclick="loadTable()">
-      🔄 Refresh Table
-    </button>
+    <button class="btn-upload" id="btnUpload" onclick="uploadFile()" disabled>Upload Excel</button>
+    <button class="btn-refresh" onclick="loadHistTable()">🔄 Refresh Table</button>
   </div>
 </div>
 
-<!-- Table Card -->
+<!-- ══════════════════ HISTORICAL DATA TABLE ══════════════════ -->
 <div class="card">
-  <div class="table-title">📋 Saved Sales Data</div>
+  <div class="table-title">📋 Historical Sales Data (Monthly Sums)</div>
   <div class="table-section">
     <table id="salesTable">
-      <thead>
-        <tr>
-          <th>Customer</th>
-          <th>Fisc Var</th>
-          <th>Year</th>
-          <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
-          <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
-          <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
-        </tr>
-      </thead>
-      <tbody id="tableBody">
-        <tr><td colspan="15" class="empty-msg">Pehle data upload karo ya "Refresh Table" click karo</td></tr>
-      </tbody>
+      <thead><tr>
+        <th>Customer</th><th>Fisc Var</th><th>Year</th>
+        <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
+        <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
+        <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+      </tr></thead>
+      <tbody id="histBody"><tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Upload data ya "Refresh Table" click karo</td></tr></tbody>
     </table>
   </div>
 </div>
 
+<!-- ══════════════════ AI FORECAST CARD ══════════════════ -->
+<div class="card forecast-card">
+  <h2>🤖 AI Sales Forecast — Claude Opus 5.5</h2>
+  <p class="subtitle">Historical data ke basis par next year ka monthly forecast generate karo using Anthropic Claude AI</p>
+
+  <!-- AI progress log -->
+  <div class="ai-log" id="aiLog"></div>
+
+  <div class="btn-row" style="margin-top:1.2rem">
+    <button class="btn-forecast" id="btnForecast" onclick="generateForecast()">
+      ✨ Generate AI Forecast
+    </button>
+    <button class="btn-refresh" onclick="loadForecastTable()">🔄 Load Saved Forecast</button>
+  </div>
+
+  <!-- Forecast results (hidden until generated) -->
+  <div id="forecastResult" style="display:none; margin-top:2rem">
+
+    <!-- Executive summary -->
+    <div class="summary-box" id="execSummary"></div>
+    <div class="method-box" id="methodBox"></div>
+
+    <!-- Monthly forecast table -->
+    <div class="table-title" id="forecastTableTitle" style="margin-top:1.5rem"></div>
+    <div class="table-section">
+      <table id="forecastTable">
+        <thead class="forecast-head"><tr>
+          <th>Customer</th><th>Fisc Var</th><th>Year</th>
+          <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th>
+          <th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th>
+          <th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+          <th>TOTAL</th><th>YoY %</th><th>Confidence</th>
+        </tr></thead>
+        <tbody id="forecastBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Insights & Risks -->
+    <div style="display:flex; gap:1.5rem; margin-top:1.5rem; flex-wrap:wrap">
+      <div style="flex:1; min-width:260px">
+        <div class="table-title">💡 Key Insights</div>
+        <ul class="insight-list" id="insightList"></ul>
+      </div>
+      <div style="flex:1; min-width:260px">
+        <div class="table-title">⚠️ Risk Factors</div>
+        <ul class="insight-list risk-list" id="riskList"></ul>
+      </div>
+    </div>
+
+    <!-- Token usage -->
+    <div style="margin-top:1rem; font-size:.78rem; color:#a0aec0" id="tokenInfo"></div>
+  </div>
+</div>
+
 <script>
-  const API = 'http://localhost:4000/api';
-  const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const API   = 'http://localhost:4000/api';
+const MO    = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+let selectedFile = null;
 
-  let selectedFile = null;
+// ── Drop zone ─────────────────────────────────────────────────
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('dragover'));
+dz.addEventListener('drop',      e  => { e.preventDefault(); dz.classList.remove('dragover'); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+document.getElementById('fileInput').addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
 
-  // ── Drag & Drop ──────────────────────────────────────────────
-  const dropZone = document.getElementById('dropZone');
+function setFile(f) {
+  selectedFile = f;
+  document.getElementById('fileName').textContent = f.name;
+  document.getElementById('fileChosen').style.display = 'block';
+  document.getElementById('btnUpload').disabled = false;
+  hideStatus();
+}
 
-  dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-  });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-  dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
-  });
+// ── Upload ────────────────────────────────────────────────────
+async function uploadFile() {
+  if (!selectedFile) return;
+  const btn = document.getElementById('btnUpload');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Uploading...';
+  showProgress(30);
+  showStatus('Uploading and processing...', 'info');
 
-  document.getElementById('fileInput').addEventListener('change', (e) => {
-    if (e.target.files[0]) setFile(e.target.files[0]);
-  });
+  const fd = new FormData();
+  fd.append('file', selectedFile);
 
-  function setFile(f) {
-    selectedFile = f;
-    document.getElementById('fileName').textContent = f.name;
-    document.getElementById('fileChosen').style.display = 'block';
-    document.getElementById('btnUpload').disabled = false;
-    hideStatus();
+  try {
+    showProgress(60);
+    const res  = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+    const json = await res.json();
+    showProgress(100);
+    if (!res.ok) throw new Error(json.error || 'Upload failed');
+
+    document.getElementById('statRows').textContent     = json.rowsRead.toLocaleString();
+    document.getElementById('statUpserted').textContent = json.upserted;
+    document.getElementById('statsRow').style.display   = 'flex';
+    showStatus(`✅ ${json.rowsRead.toLocaleString()} rows read — ${json.upserted} records saved!`, 'success');
+    await loadHistTable();
+  } catch (err) {
+    showStatus('❌ ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Upload Excel';
+    setTimeout(hideProgress, 1000);
+  }
+}
+
+// ── Historical table ───────────────────────────────────────────
+async function loadHistTable() {
+  const tbody = document.getElementById('histBody');
+  tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Loading...</td></tr>';
+  try {
+    const res  = await fetch(`${API}/upload/data`);
+    const json = await res.json();
+    const rows = json.data || [];
+    document.getElementById('statTable').textContent    = rows.length;
+    document.getElementById('statsRow').style.display   = 'flex';
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:#a0aec0;padding:2rem">Koi data nahi mila</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><strong>${r.cust_old}</strong></td>
+        <td>${r.fiscvarnt}</td>
+        <td>${r.year}</td>
+        ${MO.map(m => { const v = parseFloat(r[m])||0; return `<td class="num ${v<0?'neg':'pos'}">${v===0?'–':fmt(v)}</td>`; }).join('')}
+      </tr>`).join('');
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;color:red;padding:2rem">❌ API se connect nahi hua. npm start run karo.</td></tr>';
+  }
+}
+
+// ── AI Forecast generation (SSE) ────────────────────────────────
+function generateForecast() {
+  const btn = document.getElementById('btnForecast');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner spinner-purple"></span>Claude analyzing...';
+
+  const logEl = document.getElementById('aiLog');
+  logEl.style.display = 'block';
+  logEl.innerHTML = '';
+  document.getElementById('forecastResult').style.display = 'none';
+
+  function addLog(cls, text) {
+    logEl.innerHTML += `<div class="log-line ${cls}">${escHtml(text)}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
   }
 
-  // ── Upload ───────────────────────────────────────────────────
-  async function uploadFile() {
-    if (!selectedFile) return;
+  const es = new EventSource(`${API}/forecast/generate`);
 
-    const btn = document.getElementById('btnUpload');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Uploading...';
+  // Override: EventSource is GET-only; use fetch with SSE reader instead
+  es.close(); // close immediately, use fetch below
 
-    showProgress(30);
-    showStatus('Uploading aur processing ho raha hai...', 'info');
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
-    try {
-      showProgress(60);
-      const res  = await fetch(`${API}/upload`, { method: 'POST', body: formData });
-      const json = await res.json();
-      showProgress(100);
-
-      if (!res.ok) throw new Error(json.error || 'Upload failed');
-
-      document.getElementById('statRows').textContent     = json.rowsRead.toLocaleString();
-      document.getElementById('statUpserted').textContent = json.upserted;
-      document.getElementById('statsRow').style.display   = 'flex';
-
-      showStatus(`✅ Upload successful! ${json.rowsRead.toLocaleString()} rows read, ${json.upserted} records saved to DB.`, 'success');
-      await loadTable();
-
-    } catch (err) {
-      showStatus('❌ Error: ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = 'Upload Excel';
-      setTimeout(() => hideProgress(), 1000);
+  fetchSSE(`${API}/forecast/generate`, {
+    onStatus:  d => addLog('log-step',  d.msg),
+    onThinking:d => addLog('log-think', `🧠 ${d.msg}`),
+    onError:   d => { addLog('log-err', '❌ ' + d.msg); btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast'; },
+    onComplete:d => {
+      addLog('log-step', '🎉 Forecast complete!');
+      btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast';
+      renderForecast(d.forecast, d.forecastYear, d.tokens);
     }
-  }
+  });
+}
 
-  // ── Load Table ───────────────────────────────────────────────
-  async function loadTable() {
-    const tbody = document.getElementById('tableBody');
-    tbody.innerHTML = '<tr><td colspan="15" class="empty-msg">Loading...</td></tr>';
+// Fetch-based SSE (POST support)
+function fetchSSE(url, handlers) {
+  fetch(url, { method: 'POST', headers: { 'Accept': 'text/event-stream' } })
+    .then(res => {
+      const reader = res.body.getReader();
+      const dec    = new TextDecoder();
+      let   buf    = '';
 
-    try {
-      const res  = await fetch(`${API}/upload/data`);
-      const json = await res.json();
-      const rows = json.data || [];
-
-      document.getElementById('statTable').textContent = rows.length;
-      document.getElementById('statsRow').style.display = 'flex';
-
-      if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="15" class="empty-msg">Koi data nahi mila</td></tr>';
-        return;
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop();                     // keep incomplete chunk
+          parts.forEach(chunk => {
+            const lines  = chunk.split('\n');
+            let   event  = 'message', data = '';
+            lines.forEach(l => {
+              if (l.startsWith('event: ')) event = l.slice(7).trim();
+              if (l.startsWith('data: '))  data  = l.slice(6).trim();
+            });
+            if (!data) return;
+            try {
+              const payload = JSON.parse(data);
+              if (event === 'status'   && handlers.onStatus)   handlers.onStatus(payload);
+              if (event === 'thinking' && handlers.onThinking) handlers.onThinking(payload);
+              if (event === 'error'    && handlers.onError)    handlers.onError(payload);
+              if (event === 'complete' && handlers.onComplete) handlers.onComplete(payload);
+            } catch(_) {}
+          });
+          pump();
+        });
       }
+      pump();
+    })
+    .catch(err => handlers.onError?.({ msg: err.message }));
+}
 
-      tbody.innerHTML = rows.map(r => `
-        <tr>
-          <td><strong>${r.cust_old}</strong></td>
-          <td>${r.fiscvarnt}</td>
-          <td>${r.year}</td>
-          ${MONTHS.map(m => {
-            const v = parseFloat(r[m]) || 0;
-            const cls = v < 0 ? 'num neg' : 'num pos';
-            return `<td class="${cls}">${v === 0 ? '–' : fmt(v)}</td>`;
-          }).join('')}
-        </tr>
-      `).join('');
+// ── Render forecast results ────────────────────────────────────
+function renderForecast(data, forecastYear, tokens) {
+  document.getElementById('forecastResult').style.display = 'block';
 
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="15" class="empty-msg">❌ Server se connect nahi hua. API chal rahi hai? (localhost:4000)</td></tr>`;
-    }
+  // Executive summary
+  document.getElementById('execSummary').innerHTML =
+    `<strong>📌 Executive Summary:</strong><br>${escHtml(data.executive_summary)}`;
+
+  // Methodology
+  document.getElementById('methodBox').innerHTML =
+    `<strong>📐 Methodology:</strong> ${escHtml(data.methodology)}`;
+
+  // Table title
+  document.getElementById('forecastTableTitle').textContent =
+    `📅 Forecast: Year ${forecastYear}`;
+
+  // Forecast rows
+  const tbody = document.getElementById('forecastBody');
+  tbody.innerHTML = (data.forecasts || []).map(f => {
+    const growthCls = f.yoy_growth_pct >= 0 ? 'growth-up' : 'growth-down';
+    const growthSign= f.yoy_growth_pct >= 0 ? '+' : '';
+    return `<tr>
+      <td><strong>${f.cust_old}</strong></td>
+      <td>${f.fiscvarnt}</td>
+      <td>${f.forecast_year}</td>
+      ${MO.map(m => `<td class="num pos">${fmt(f[m])}</td>`).join('')}
+      <td class="num" style="font-weight:700">${fmt(f.total_forecast)}</td>
+      <td class="num ${growthCls}">${growthSign}${Number(f.yoy_growth_pct).toFixed(1)}%</td>
+      <td style="text-align:center"><span class="badge badge-${f.confidence}">${f.confidence.toUpperCase()}</span></td>
+    </tr>`;
+  }).join('');
+
+  // Key insights (from first forecast segment)
+  const insights = data.forecasts?.[0]?.key_insights || [];
+  document.getElementById('insightList').innerHTML =
+    insights.map(i => `<li>${escHtml(i)}</li>`).join('');
+
+  // Risk factors
+  document.getElementById('riskList').innerHTML =
+    (data.risk_factors || []).map(r => `<li>${escHtml(r)}</li>`).join('');
+
+  // Token usage
+  if (tokens) {
+    document.getElementById('tokenInfo').textContent =
+      `Claude Opus 5.5 — Input: ${tokens.input?.toLocaleString()} tokens | Output: ${tokens.output?.toLocaleString()} tokens`;
   }
+}
 
-  // ── Helpers ───────────────────────────────────────────────────
-  function fmt(v) {
-    return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+// ── Load saved forecast ────────────────────────────────────────
+async function loadForecastTable() {
+  try {
+    const res  = await fetch(`${API}/forecast/latest`);
+    const json = await res.json();
+    if (!json.data?.length) { alert('No saved forecast found. Generate one first.'); return; }
+
+    // Build a pseudo forecast object from DB rows and render
+    const first = json.data[0];
+    const mockData = {
+      forecasts:         json.data.map(r => ({
+        ...r,
+        key_insights:  typeof r.key_insights  === 'string' ? JSON.parse(r.key_insights)  : (r.key_insights || []),
+        risk_factors:  typeof r.risk_factors   === 'string' ? JSON.parse(r.risk_factors)   : (r.risk_factors || []),
+      })),
+      executive_summary: first.executive_summary || '–',
+      methodology:       first.methodology       || '–',
+      risk_factors:      typeof first.risk_factors === 'string' ? JSON.parse(first.risk_factors) : (first.risk_factors || []),
+    };
+    document.getElementById('aiLog').style.display = 'block';
+    document.getElementById('aiLog').innerHTML = `<div class="log-line log-step">✅ Loaded saved forecast from DB</div>`;
+    renderForecast(mockData, first.forecast_year, null);
+  } catch (err) {
+    alert('Error: ' + err.message);
   }
+}
 
-  function showStatus(msg, type) {
-    const el = document.getElementById('statusMsg');
-    el.textContent = msg;
-    el.className = `status ${type}`;
-    el.style.display = 'block';
-  }
+// ── Helpers ────────────────────────────────────────────────────
+function fmt(v) { return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showStatus(msg, type) { const el = document.getElementById('statusMsg'); el.textContent = msg; el.className = `status ${type}`; el.style.display = 'block'; }
+function hideStatus()          { document.getElementById('statusMsg').style.display = 'none'; }
+function showProgress(pct)     { document.getElementById('progressWrap').style.display = 'block'; document.getElementById('progressBar').style.width = pct + '%'; }
+function hideProgress()        { document.getElementById('progressWrap').style.display = 'none'; document.getElementById('progressBar').style.width = '0%'; }
 
-  function hideStatus() {
-    document.getElementById('statusMsg').style.display = 'none';
-  }
-
-  function showProgress(pct) {
-    document.getElementById('progressWrap').style.display = 'block';
-    document.getElementById('progressBar').style.width = pct + '%';
-  }
-
-  function hideProgress() {
-    document.getElementById('progressWrap').style.display = 'none';
-    document.getElementById('progressBar').style.width = '0%';
-  }
-
-  // Auto-load table on page open
-  loadTable();
+// Auto-load on page open
+loadHistTable();
 </script>
 </body>
 </html>
