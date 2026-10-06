@@ -1,15 +1,20 @@
 'use strict';
 
-require('dotenv').config();
+// dotenv is loaded once in server.js — never call config() in route files
 const express   = require('express');
-const Anthropic  = require('@anthropic-ai/sdk');
+const Anthropic = require('@anthropic-ai/sdk');
 const pool      = require('../db');
 
 const router = express.Router();
-const ai     = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// Lazy-init: gives server.js time to validate ANTHROPIC_API_KEY before first use
+let _ai;
+function getAI() {
+  if (!_ai) _ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _ai;
+}
 
 const MONTHS      = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,14 +56,14 @@ Call this tool once with ALL segments. Every number must be a precise integer or
             total_forecast:   { type: 'number', description: 'Sum of all 12 monthly forecasts' },
             yoy_growth_pct:   { type: 'number', description: 'YoY growth % vs most recent year' },
             confidence:       { type: 'string', enum: ['high','medium','low'] },
-            key_insights:     { type: 'array',  items: { type: 'string' }, minItems: 3 },
+            key_insights:     { type: 'array',  items: { type: 'string' }, description: 'At least 3 key insights' },
             seasonal_pattern: { type: 'string', description: 'Observed seasonal pattern description' }
           }
         }
       },
       executive_summary: { type: 'string', description: '3-5 sentence executive summary' },
       methodology:       { type: 'string', description: 'Forecasting method description' },
-      risk_factors:      { type: 'array',  items: { type: 'string' }, minItems: 2, description: 'Key forecast risks' }
+      risk_factors:      { type: 'array',  items: { type: 'string' }, description: 'At least 2 key forecast risks' }
     }
   }
 };
@@ -100,14 +105,14 @@ function computeAnalytics(rows) {
         : 0;
     }
 
-    // CAGR across all available years
+    // CAGR across all available years — guard against zero/negative base
     const firstTotal = annualTotals[years[0]];
     const lastTotal  = annualTotals[maxYear];
-    const cagr = (years.length > 1 && Math.abs(firstTotal) > 0)
+    const cagr = (years.length > 1 && firstTotal !== 0 && isFinite(firstTotal) && isFinite(lastTotal))
       ? +((Math.pow(Math.abs(lastTotal) / Math.abs(firstTotal), 1 / (years.length - 1)) - 1) * 100).toFixed(2)
       : 0;
 
-    // Seasonal indices per year (month value / monthly avg × 100)
+    // Seasonal indices per year — guard against zero annual total
     const seasonalByYear = {};
     years.forEach(y => {
       const monthlyAvg = annualTotals[y] / 12;
@@ -117,15 +122,19 @@ function computeAnalytics(rows) {
       }, {});
     });
 
-    // Weighted average seasonal index: recent year gets 50%, year-1 gets 30%, year-2 gets 20%
-    const weights = years.length >= 3
-      ? { [years[years.length-1]]: 0.50, [years[years.length-2]]: 0.30, [years[years.length-3]]: 0.20 }
-      : years.length === 2
-        ? { [years[1]]: 0.65, [years[0]]: 0.35 }
-        : { [years[0]]: 1.0 };
+    // Triangular weights: most-recent year gets highest weight (sums to 1.0)
+    const weights = {};
+    if (years.length === 1) {
+      weights[years[0]] = 1;
+    } else {
+      const denom = (years.length * (years.length + 1)) / 2;
+      years.forEach((y, i) => { weights[y] = (i + 1) / denom; });
+    }
 
+    // Weighted average seasonal index — guard division by zero
     const wtdSeasonalIdx = MONTHS.reduce((acc, m) => {
-      acc[m] = +Object.entries(weights).reduce((s, [y, w]) => s + (seasonalByYear[Number(y)]?.[m] ?? 0) * w, 0).toFixed(1);
+      const raw = Object.entries(weights).reduce((s, [y, w]) => s + (seasonalByYear[Number(y)]?.[m] ?? 0) * w, 0);
+      acc[m] = isFinite(raw) ? +raw.toFixed(1) : 0;
       return acc;
     }, {});
 
@@ -226,10 +235,11 @@ Return all results via the submit_forecast tool.`;
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/generate', async (req, res) => {
   // SSE headers
-  res.setHeader('Content-Type',  'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('Content-Type',        'text/event-stream');
+  res.setHeader('Cache-Control',       'no-cache');
+  res.setHeader('Connection',          'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('X-Accel-Buffering',   'no');   // disable nginx/proxy buffering
   res.flushHeaders();
 
   const emit = (event, data) =>
@@ -257,7 +267,7 @@ router.post('/generate', async (req, res) => {
     emit('status', { step: 3, msg: '🤖 Claude Opus 5.5 is analyzing patterns (this may take 30–90 seconds)...' });
     emit('thinking', { msg: 'Initializing AI analysis with adaptive thinking...' });
 
-    const msgStream = ai.messages.stream({
+    const msgStream = getAI().messages.stream({
       model:        'claude-opus-5-5',
       max_tokens:   64000,
       thinking:     { type: 'adaptive', display: 'summarized' },
@@ -392,7 +402,7 @@ const RECOMMEND_TOOL = {
       },
       recommendations: {
         type: 'array',
-        minItems: 3,
+        description: 'At least 3 specific actionable recommendations',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -480,8 +490,8 @@ METHODOLOGY USED: ${f.methodology || 'N/A'}
 Provide deep reasoning, confidence explanation, and 3-5 specific business recommendations.
 Call the submit_recommendation tool with your analysis.`;
 
-    const response = await ai.messages.create({
-      model:      'claude-haiku-4-5-20251001',
+    const response = await getAI().messages.create({
+      model:      'claude-haiku-4-5',
       max_tokens: 4096,
       system:     'You are a sharp, data-driven sales analytics expert. Always call the submit_recommendation tool.',
       messages:   [{ role: 'user', content: prompt }],

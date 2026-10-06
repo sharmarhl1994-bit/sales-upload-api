@@ -172,8 +172,8 @@
   <!-- Tabs Card -->
   <div class="card">
     <div class="tab-nav">
-      <button class="tab-btn active"        id="t1" onclick="switchTab(1)">📋 Current Sales</button>
-      <button class="tab-btn active-purple" id="t2" onclick="switchTab(2)" style="color:#9f7aea;border-bottom-color:transparent">🤖 Future Forecast</button>
+      <button class="tab-btn active" id="t1" onclick="switchTab(1)">📋 Current Sales</button>
+      <button class="tab-btn"        id="t2" onclick="switchTab(2)">🤖 Future Forecast</button>
     </div>
 
     <!-- ── Tab 1: Current ── -->
@@ -291,6 +291,7 @@ const MOS  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov',
 
 let selectedFile = null;
 let currentDetailRow = null;   // the forecast row being viewed
+let sseInFlight     = false;   // prevent concurrent forecast streams
 
 // ── Drop zone ──────────────────────────────────────────────
 const dz = document.getElementById('dz');
@@ -331,13 +332,10 @@ async function uploadFile() {
 
 // ── Tab switching ──────────────────────────────────────────
 function switchTab(n) {
-  ['pane1','pane2'].forEach((p,i) => {
-    document.getElementById(p).classList.toggle('active', i+1 === n);
-  });
-  document.getElementById('t1').className = n===1 ? 'tab-btn active' : 'tab-btn';
-  document.getElementById('t2').className = n===2 ? 'tab-btn active-purple active' : 'tab-btn active-purple';
-  document.getElementById('t2').style.color = n===2 ? '#6b46c1' : '#9f7aea';
-  document.getElementById('t2').style.borderBottomColor = n===2 ? '#6b46c1' : 'transparent';
+  document.getElementById('pane1').classList.toggle('active', n === 1);
+  document.getElementById('pane2').classList.toggle('active', n === 2);
+  document.getElementById('t1').className = n === 1 ? 'tab-btn active'        : 'tab-btn';
+  document.getElementById('t2').className = n === 2 ? 'tab-btn active-purple' : 'tab-btn';
 }
 
 // ── Historical table ───────────────────────────────────────
@@ -361,6 +359,8 @@ async function loadHistTable() {
 
 // ── Generate AI Forecast (SSE) ─────────────────────────────
 function generateForecast() {
+  if (sseInFlight) return;
+  sseInFlight = true;
   const btn = document.getElementById('btnFc');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Claude analyzing...';
   const log = document.getElementById('aiLog');
@@ -371,15 +371,21 @@ function generateForecast() {
     log.scrollTop = log.scrollHeight;
   }
 
+  function resetBtn() {
+    sseInFlight = false;
+    btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast';
+  }
+
   fetchSSE(`${API}/forecast/generate`, {
     status:   d => lg('lg-s', d.msg),
     thinking: d => lg('lg-t', '🧠 ' + d.msg),
-    error:    d => { lg('lg-e', '❌ ' + d.msg); btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast'; },
+    error:    d => { lg('lg-e', '❌ ' + d.msg); resetBtn(); },
     complete: d => {
       lg('lg-s', '🎉 Done!');
-      btn.disabled = false; btn.innerHTML = '✨ Generate AI Forecast';
+      resetBtn();
       renderForecastTable(d.forecast?.forecasts || []);
-    }
+    },
+    _done: () => resetBtn(),   // stream closed without complete (e.g. network drop)
   });
 }
 
@@ -477,9 +483,12 @@ function openDetail(tr) {
 
   // Show detail, hide main
   document.getElementById('mainView').style.display = 'none';
-  const dv = document.getElementById('detailView');
+  const dv   = document.getElementById('detailView');
+  const card = document.getElementById('detailCard');
   dv.style.display = 'block';
-  document.getElementById('detailCard').className = 'card page-enter';
+  card.classList.remove('page-enter');
+  void card.offsetWidth;    // force reflow so CSS animation re-triggers
+  card.classList.add('page-enter');
   window.scrollTo(0, 0);
 }
 
@@ -560,20 +569,22 @@ function fetchSSE(url, handlers) {
       const reader = res.body.getReader(), dec = new TextDecoder();
       let buf = '';
       (function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) return;
-          buf += dec.decode(value, { stream: true });
-          buf.split('\n\n').slice(0, -1).forEach(chunk => {
-            let ev = 'message', data = '';
-            chunk.split('\n').forEach(l => {
-              if (l.startsWith('event: ')) ev   = l.slice(7).trim();
-              if (l.startsWith('data: '))  data = l.slice(6).trim();
+        reader.read()
+          .then(({ done, value }) => {
+            if (done) { handlers._done?.(); return; }
+            try { buf += dec.decode(value, { stream: true }); } catch (_) {}
+            buf.split('\n\n').slice(0, -1).forEach(chunk => {
+              let ev = 'message', data = '';
+              chunk.split('\n').forEach(l => {
+                if (l.startsWith('event: ')) ev   = l.slice(7).trim();
+                if (l.startsWith('data: '))  data = l.slice(6).trim();
+              });
+              try { if (data) handlers[ev]?.(JSON.parse(data)); } catch(_){}
             });
-            try { if (data) handlers[ev]?.(JSON.parse(data)); } catch(_){}
-          });
-          buf = buf.split('\n\n').slice(-1)[0];
-          pump();
-        });
+            buf = buf.split('\n\n').slice(-1)[0];
+            pump();
+          })
+          .catch(e => { handlers.error?.({ msg: e.message }); handlers._done?.(); });
       })();
     })
     .catch(e => handlers.error?.({ msg: e.message }));

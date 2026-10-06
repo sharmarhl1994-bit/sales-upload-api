@@ -10,7 +10,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 
 // Month number → column name
 const MONTH_COL = { 1:'jan',2:'feb',3:'mar',4:'apr',5:'may',6:'jun',7:'jul',8:'aug',9:'sep',10:'oct',11:'nov',12:'dec' };
-const ALL_MONTHS = Object.values(MONTH_COL);
+
+const ALLOWED_MIME = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  // .xlsx
+  'application/vnd.ms-excel',                                           // .xls
+  'application/octet-stream',                                           // some browsers send this for xlsx
+]);
 
 /**
  * Aggregate Excel rows into { "custOld|fiscvarnt|year" -> { jan:0, feb:0, ... } }
@@ -53,6 +58,12 @@ function aggregateRows(rows) {
 router.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded. Use field name "file".' });
+  }
+
+  const mime = req.file.mimetype || '';
+  const ext  = (req.file.originalname || '').split('.').pop().toLowerCase();
+  if (!ALLOWED_MIME.has(mime) && ext !== 'xlsx' && ext !== 'xls') {
+    return res.status(400).json({ error: `Invalid file type "${mime}". Upload an Excel (.xlsx/.xls) file.` });
   }
 
   try {
