@@ -251,6 +251,109 @@ Return all results via the submit_forecast tool.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pure algorithmic forecast — no AI, instant, scales to any number of segments
+//
+// Formula (same as what we asked Claude to do):
+//   blended_growth  = 0.7 × most_recent_YoY + 0.3 × CAGR   (if 2+ years)
+//   annual_target   = wtdAnnualBase × (1 + blended_growth/100)
+//   month_forecast  = annual_target × (wtdSeasonalIdx[m] / 1200)
+// ─────────────────────────────────────────────────────────────────────────────
+function computeForecast(analyticsArr) {
+  const forecasts = analyticsArr.map(a => {
+    const maxYear  = Math.max(...a.years);
+    const lastTotal = a.annualTotals[maxYear];
+
+    // ── Growth rate ────────────────────────────────────────
+    const yoyKeys    = Object.keys(a.yoyGrowth).sort();
+    const recentYoy  = yoyKeys.length > 0
+      ? a.yoyGrowth[yoyKeys[yoyKeys.length - 1]]
+      : 0;
+    const rawGrowth  = yoyKeys.length >= 2
+      ? (0.7 * recentYoy + 0.3 * a.cagr)
+      : (recentYoy || a.cagr || 0);
+    const growth     = Math.max(-80, Math.min(80, rawGrowth));   // cap ±80%
+
+    // ── Annual target & monthly distribution ───────────────
+    const annualTarget = a.wtdAnnualBase * (1 + growth / 100);
+    const monthly      = {};
+    MONTHS.forEach(m => {
+      monthly[m] = +(annualTarget * ((a.wtdSeasonalIdx[m] ?? 100) / 1200)).toFixed(2);
+    });
+    const totalForecast  = +MONTHS.reduce((s, m) => s + monthly[m], 0).toFixed(2);
+    const yoy_growth_pct = lastTotal !== 0
+      ? +((annualTarget - lastTotal) / Math.abs(lastTotal) * 100).toFixed(4)
+      : 0;
+
+    // ── Confidence ─────────────────────────────────────────
+    const allYoys    = Object.values(a.yoyGrowth);
+    const maxSwing   = allYoys.length ? Math.max(...allYoys.map(Math.abs)) : 0;
+    const confidence = a.years.length >= 3 && maxSwing < 40 ? 'high'
+      : a.years.length >= 2 && maxSwing < 70                ? 'medium'
+      :                                                        'low';
+
+    // ── Key insights ───────────────────────────────────────
+    const peakMonth   = MONTHS.reduce((b, m) => monthly[m] > monthly[b] ? m : b, MONTHS[0]);
+    const troughMonth = MONTHS.reduce((b, m) => monthly[m] < monthly[b] ? m : b, MONTHS[0]);
+    const key_insights = [
+      `Peak month: ${peakMonth.toUpperCase()} (₹${Math.round(monthly[peakMonth]).toLocaleString('en-IN')})`,
+      `Trough month: ${troughMonth.toUpperCase()} (₹${Math.round(monthly[troughMonth]).toLocaleString('en-IN')})`,
+      `Blended growth applied: ${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (70% recent YoY + 30% CAGR)`,
+      `Historical CAGR (${a.years[0]}–${maxYear}): ${a.cagr >= 0 ? '+' : ''}${a.cagr.toFixed(1)}%`,
+      `Weighted annual base: ₹${Math.round(a.wtdAnnualBase).toLocaleString('en-IN')}`,
+    ];
+    if (a.years.length === 1) key_insights.push('Single year of data — seasonal pattern assumed flat; confidence low.');
+
+    // ── Seasonal pattern summary ───────────────────────────
+    const topMonths = [...MONTHS]
+      .sort((x, y) => monthly[y] - monthly[x])
+      .slice(0, 3)
+      .map(m => m.toUpperCase());
+    const siMin = Math.min(...MONTHS.map(m => a.wtdSeasonalIdx[m] ?? 100));
+    const siMax = Math.max(...MONTHS.map(m => a.wtdSeasonalIdx[m] ?? 100));
+    const seasonal_pattern =
+      `Strong months: ${topMonths.join(', ')}. Seasonal index range: ${siMin.toFixed(0)}–${siMax.toFixed(0)}.`;
+
+    return {
+      cust_old:       a.cust_old,
+      fiscvarnt:      a.fiscvarnt,
+      forecast_year:  a.forecastYear,
+      ...monthly,
+      total_forecast: totalForecast,
+      yoy_growth_pct,
+      confidence,
+      key_insights,
+      seasonal_pattern,
+    };
+  });
+
+  // ── Portfolio-level summary ────────────────────────────────
+  const grandTotal   = forecasts.reduce((s, f) => s + f.total_forecast, 0);
+  const highCount    = forecasts.filter(f => f.confidence === 'high').length;
+  const medCount     = forecasts.filter(f => f.confidence === 'medium').length;
+  const forecastYear = forecasts[0]?.forecast_year ?? '';
+
+  const executive_summary =
+    `Algorithmic forecast for ${forecasts.length} segments targeting FY${forecastYear}. ` +
+    `Total projected revenue: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. ` +
+    `Confidence breakdown: ${highCount} HIGH, ${medCount} MEDIUM, ${forecasts.length - highCount - medCount} LOW. ` +
+    `Methodology uses triangular-weighted seasonal decomposition with blended growth (70% recent YoY + 30% CAGR), capped at ±80%.`;
+
+  const methodology =
+    'Triangular-weighted seasonal decomposition. ' +
+    'Annual target = wtdAnnualBase × (1 + blended_growth), ' +
+    'where blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR (capped ±80%). ' +
+    'Monthly values = annual_target × (weightedSeasonalIndex / 1200).';
+
+  const risk_factors = [
+    'Growth rate blending assumes recent trend continues — significant business changes may invalidate this.',
+    'Seasonal indices derived from historical data; structural shifts in buying patterns are not captured.',
+    'External factors (macroeconomic, competition, supply disruptions) are not modelled.',
+  ];
+
+  return { forecasts, executive_summary, methodology, risk_factors };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/forecast/generate
 // Streams SSE events back: status | thinking | complete | error
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,51 +387,12 @@ router.post('/generate', async (req, res) => {
     const forecastYear = analytics[0]?.forecastYear;
     emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
-    // ── Step 3: Call Claude Sonnet 5.5 ──────────────────────
-    emit('status', { step: 3, msg: '🤖 Claude Opus 5.5 is analyzing patterns (this may take 30–90 seconds)...' });
-    emit('thinking', { msg: 'Initializing AI analysis...' });
+    // ── Step 3: Algorithmic forecast ────────────────────────
+    emit('status', { step: 3, msg: `⚡ Computing forecast for ${analytics.length} segment(s)...` });
 
-    const systemPrompt = `You are an elite sales forecasting analyst.
-CRITICAL: Your ONLY valid response is a call to the submit_forecast tool.
-Do NOT write any text. Do NOT explain. Do NOT ask questions.
-Call submit_forecast immediately with the complete forecast for every segment.`;
+    const payload = computeForecast(analytics);
 
-    const userMessages = [{ role: 'user', content: buildPrompt(analytics) }];
-    const aiConfig = {
-      model:      'claude-opus-5-5',
-      max_tokens: 16000,
-      system:     systemPrompt,
-      tools:      [FORECAST_TOOL],
-    };
-
-    let finalMsg = await getAI().messages.create({ ...aiConfig, messages: userMessages });
-    let toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
-
-    // Retry up to 2 more times with escalating nudges
-    const nudges = [
-      'You must call the submit_forecast tool now. Do not write text.',
-      'CALL THE submit_forecast TOOL IMMEDIATELY. No text allowed.',
-    ];
-    for (let i = 0; !toolBlock && i < nudges.length; i++) {
-      emit('thinking', { msg: `🔄 Retry ${i + 1}: requesting tool call...` });
-      finalMsg = await getAI().messages.create({
-        ...aiConfig,
-        messages: [
-          ...userMessages,
-          { role: 'assistant', content: finalMsg.content.length ? finalMsg.content : [{ type: 'text', text: '...' }] },
-          { role: 'user',      content: nudges[i] },
-        ],
-      });
-      toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
-    }
-
-    if (!toolBlock) {
-      const textFallback = finalMsg.content.find(b => b.type === 'text')?.text || '';
-      throw new Error(`Claude did not call the forecast tool. Response: ${textFallback.slice(0, 300)}`);
-    }
-
-    const payload = toolBlock.input;
-    emit('status', { step: 3, msg: `✅ Forecast generated — ${payload.forecasts.length} segment(s), ${finalMsg.usage.output_tokens.toLocaleString()} output tokens` });
+    emit('status', { step: 3, msg: `✅ Forecast computed — ${payload.forecasts.length} segment(s)` });
 
     // ── Step 4: Persist to DB ────────────────────────────────
     emit('status', { step: 4, msg: '💾 Saving forecast to PostgreSQL...' });
@@ -385,14 +449,7 @@ Call submit_forecast immediately with the complete forecast for every segment.`;
     }
 
     emit('status', { step: 4, msg: '✅ Forecast saved to DB!' });
-    emit('complete', {
-      forecast:     payload,
-      forecastYear,
-      tokens: {
-        input:  finalMsg.usage.input_tokens,
-        output: finalMsg.usage.output_tokens,
-      },
-    });
+    emit('complete', { forecast: payload, forecastYear });
 
   } catch (err) {
     console.error('[forecast] error:', err.message);
