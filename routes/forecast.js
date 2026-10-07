@@ -270,7 +270,6 @@ router.post('/generate', async (req, res) => {
     const msgStream = getAI().messages.stream({
       model:      'claude-sonnet-5-5',
       max_tokens: 16000,
-      thinking:   { type: 'enabled', budget_tokens: 8000 },
       system: `You are an elite sales forecasting analyst with deep expertise in:
 - Time-series decomposition and trend analysis
 - Seasonal pattern recognition and adjustment
