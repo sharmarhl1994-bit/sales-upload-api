@@ -1,33 +1,60 @@
 'use strict';
 
-// dotenv is loaded once in server.js — never call config() in route files
 const express   = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const pool      = require('../db');
 
 const router = express.Router();
 
-// Lazy-init: gives server.js time to validate ANTHROPIC_API_KEY before first use
+// Lazy-init Anthropic client so server.js validates the key before first use
 let _ai;
-function getAI() {
-  if (!_ai) _ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return _ai;
-}
+const getAI = () => _ai || (_ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }));
 
-// Calendar order (used for tool schema & analytics)
+// Calendar month order — used throughout for analytics, prompts, and DB params
 const MONTHS      = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-// Indian fiscal year order (Apr = FY start) — used for DB inserts & display
-const FY_MONTHS   = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool definition — forced structured JSON output via tool_use
-// strict: true guarantees Claude always returns schema-valid JSON
-// ─────────────────────────────────────────────────────────────────────────────
+// Fiscal year month order (Apr = FY start) — used for festival factor lookup
+const FY_MONTHS = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
+
+// Fetch total festival impact score per month for a given set of years
+// Returns: { year: { month: totalScore } }
+async function fetchFestivalScores(years) {
+  const { rows } = await pool.query(
+    `SELECT year, fiscal_month, SUM(impact_score)::int AS score
+     FROM festivals WHERE year = ANY($1::int[])
+     GROUP BY year, fiscal_month`,
+    [years]
+  );
+  const scores = {};
+  rows.forEach(r => {
+    if (!scores[r.year]) scores[r.year] = {};
+    scores[r.year][r.fiscal_month] = r.score;
+  });
+  return scores;
+}
+
+// Compute per-month festival multiplier for each analytics object
+// Logic: if forecast year has more festivals in a month than historical avg → small boost, and vice versa
+// Max adjustment is ±15% to avoid over-riding the seasonal index
+function addFestivalFactors(analyticsArr, festivalScores) {
+  return analyticsArr.map(a => {
+    const festivalFactor = {};
+    FY_MONTHS.forEach(m => {
+      const forecastScore = festivalScores[a.forecastYear]?.[m] || 0;
+      const histAvg = a.years.reduce((s, y) => s + (festivalScores[y]?.[m] || 0), 0) / a.years.length;
+      // delta = how much more/less festival load this month vs historical average
+      const delta = histAvg > 0 ? (forecastScore - histAvg) / histAvg : 0;
+      festivalFactor[m] = 1 + Math.max(-0.15, Math.min(0.15, delta * 0.3));
+    });
+    return { ...a, festivalFactor };
+  });
+}
+
+// Claude tool schema — forces structured forecast output
 const FORECAST_TOOL = {
   name: 'submit_forecast',
-  description: `Submit the complete monthly sales forecast for the next fiscal year.
-Call this tool once with ALL segments. Every number must be a precise integer or decimal in INR.`,
+  description: 'Submit monthly sales forecasts for all segments. All values are plain integers in INR (no commas, no symbols).',
   input_schema: {
     type: 'object',
     additionalProperties: false,
@@ -35,334 +62,232 @@ Call this tool once with ALL segments. Every number must be a precise integer or
     properties: {
       forecasts: {
         type: 'array',
-        description: 'One entry per cust_old + fiscvarnt combination',
         items: {
           type: 'object',
           additionalProperties: false,
           required: [
             'cust_old','fiscvarnt','forecast_year',
             'jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec',
-            'total_forecast','yoy_growth_pct','confidence','key_insights','seasonal_pattern'
+            'total_forecast','yoy_growth_pct','confidence','key_insights','seasonal_pattern',
           ],
           properties: {
-            cust_old:         { type: 'string', description: 'Exact store code from the segment header, e.g. "STORE001"' },
+            cust_old:         { type: 'string', description: 'Exact store code from segment header, e.g. "AMB"' },
             fiscvarnt:        { type: 'string' },
             forecast_year:    { type: 'integer' },
-            jan:  { type: 'number', description: 'January forecast (INR)' },
-            feb:  { type: 'number' }, mar:  { type: 'number' },
-            apr:  { type: 'number' }, may:  { type: 'number' },
-            jun:  { type: 'number' }, jul:  { type: 'number' },
-            aug:  { type: 'number' }, sep:  { type: 'number' },
-            oct:  { type: 'number' }, nov:  { type: 'number' },
-            dec:  { type: 'number', description: 'December forecast (INR)' },
-            total_forecast:   { type: 'number', description: 'Sum of all 12 monthly forecasts' },
-            yoy_growth_pct:   { type: 'number', description: 'YoY growth % vs most recent year' },
+            jan: { type: 'number' }, feb: { type: 'number' }, mar: { type: 'number' },
+            apr: { type: 'number' }, may: { type: 'number' }, jun: { type: 'number' },
+            jul: { type: 'number' }, aug: { type: 'number' }, sep: { type: 'number' },
+            oct: { type: 'number' }, nov: { type: 'number' }, dec: { type: 'number' },
+            total_forecast:   { type: 'number' },
+            yoy_growth_pct:   { type: 'number' },
             confidence:       { type: 'string', enum: ['high','medium','low'] },
-            key_insights:     { type: 'array',  items: { type: 'string' }, description: 'At least 3 key insights' },
-            seasonal_pattern: { type: 'string', description: 'Observed seasonal pattern description' }
-          }
-        }
+            key_insights:     { type: 'array', items: { type: 'string' } },
+            seasonal_pattern: { type: 'string' },
+          },
+        },
       },
-      executive_summary: { type: 'string', description: '3-5 sentence executive summary' },
-      methodology:       { type: 'string', description: 'Forecasting method description' },
-      risk_factors:      { type: 'array',  items: { type: 'string' }, description: 'At least 2 key forecast risks' }
-    }
-  }
+      executive_summary: { type: 'string' },
+      methodology:       { type: 'string' },
+      risk_factors:      { type: 'array', items: { type: 'string' } },
+    },
+  },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pre-process DB rows into rich analytics before sending to Claude.
-// Giving Claude pre-computed stats dramatically improves forecast quality.
-// ─────────────────────────────────────────────────────────────────────────────
+// Group DB rows by store, compute annual totals, YoY growth, CAGR, and weighted seasonal indices
 function computeAnalytics(rows) {
   const groups = {};
-
   rows.forEach(row => {
-    const key = row.code;
-    if (!groups[key]) groups[key] = {
-      cust_old:   row.code,
-      fiscvarnt:  'EBO',
-      // Store metadata from first row seen for this code
-      name:       row.name       || null,
-      zone:       row.zone       || null,
-      region:     row.region     || null,
-      grade:      row.grade      || null,
-      store_type: row.store_type || null,
-      channel:    row.channel    || null,
-      status:     row.status     || null,
-      byYear: {},
-    };
-    groups[key].byYear[Number(row.fy_year)] = MONTHS.reduce((acc, m) => {
+    if (!groups[row.code]) {
+      groups[row.code] = {
+        cust_old: row.code, fiscvarnt: 'EBO',
+        name: row.name||null, zone: row.zone||null, region: row.region||null,
+        grade: row.grade||null, store_type: row.store_type||null,
+        channel: row.channel||null, status: row.status||null,
+        byYear: {},
+      };
+    }
+    groups[row.code].byYear[Number(row.fy_year)] = MONTHS.reduce((acc, m) => {
       acc[m] = parseFloat(row[m]) || 0;
       return acc;
     }, {});
   });
 
   return Object.values(groups).map(grp => {
-    const years     = Object.keys(grp.byYear).map(Number).sort();
-    const maxYear   = Math.max(...years);
+    const years      = Object.keys(grp.byYear).map(Number).sort();
+    const maxYear    = Math.max(...years);
     const forecastYear = maxYear + 1;
 
-    // Annual totals
     const annualTotals = {};
-    years.forEach(y => {
-      annualTotals[y] = MONTHS.reduce((s, m) => s + grp.byYear[y][m], 0);
-    });
+    years.forEach(y => { annualTotals[y] = MONTHS.reduce((s, m) => s + grp.byYear[y][m], 0); });
 
-    // Year-over-year growth rates
+    // YoY growth % for each consecutive year pair
     const yoyGrowth = {};
     for (let i = 1; i < years.length; i++) {
-      const [prev, curr] = [years[i - 1], years[i]];
+      const [prev, curr] = [years[i-1], years[i]];
       const base = Math.abs(annualTotals[prev]);
       yoyGrowth[`${prev}→${curr}`] = base > 0
-        ? +((annualTotals[curr] - annualTotals[prev]) / base * 100).toFixed(2)
-        : 0;
+        ? +((annualTotals[curr] - annualTotals[prev]) / base * 100).toFixed(2) : 0;
     }
 
-    // CAGR across all available years — guard against zero/negative base
-    const firstTotal = annualTotals[years[0]];
-    const lastTotal  = annualTotals[maxYear];
-    const cagr = (years.length > 1 && firstTotal !== 0 && isFinite(firstTotal) && isFinite(lastTotal))
+    const [firstTotal, lastTotal] = [annualTotals[years[0]], annualTotals[maxYear]];
+    const cagr = years.length > 1 && firstTotal !== 0
       ? +((Math.pow(Math.abs(lastTotal) / Math.abs(firstTotal), 1 / (years.length - 1)) - 1) * 100).toFixed(2)
       : 0;
 
-    // Seasonal indices per year — guard against zero annual total
+    // Seasonal index: each month as % of avg month (100 = average, 150 = 50% above average)
     const seasonalByYear = {};
     years.forEach(y => {
-      const monthlyAvg = annualTotals[y] / 12;
+      const avg = annualTotals[y] / 12;
       seasonalByYear[y] = MONTHS.reduce((acc, m) => {
-        acc[m] = monthlyAvg !== 0 ? +(grp.byYear[y][m] / monthlyAvg * 100).toFixed(1) : 0;
+        acc[m] = avg !== 0 ? +(grp.byYear[y][m] / avg * 100).toFixed(1) : 0;
         return acc;
       }, {});
     });
 
-    // Triangular weights: most-recent year gets highest weight (sums to 1.0)
+    // Triangular weights: year 1 gets lowest weight, latest year gets highest
+    const denom   = (years.length * (years.length + 1)) / 2;
     const weights = {};
-    if (years.length === 1) {
-      weights[years[0]] = 1;
-    } else {
-      const denom = (years.length * (years.length + 1)) / 2;
-      years.forEach((y, i) => { weights[y] = (i + 1) / denom; });
-    }
+    years.forEach((y, i) => { weights[y] = (i + 1) / denom; });
 
-    // Weighted average seasonal index — guard division by zero
     const wtdSeasonalIdx = MONTHS.reduce((acc, m) => {
-      const raw = Object.entries(weights).reduce((s, [y, w]) => s + (seasonalByYear[Number(y)]?.[m] ?? 0) * w, 0);
-      acc[m] = isFinite(raw) ? +raw.toFixed(1) : 0;
+      const v = Object.entries(weights).reduce((s, [y, w]) => s + (seasonalByYear[Number(y)]?.[m] ?? 0) * w, 0);
+      acc[m] = isFinite(v) ? +v.toFixed(1) : 0;
       return acc;
     }, {});
 
-    // Weighted annual trend projection (same weights applied to annual totals)
     const wtdAnnualBase = +Object.entries(weights)
       .reduce((s, [y, w]) => s + (annualTotals[Number(y)] ?? 0) * w, 0)
       .toFixed(0);
 
     return {
-      cust_old:       grp.cust_old,
-      fiscvarnt:      grp.fiscvarnt,
-      name:           grp.name,
-      zone:           grp.zone,
-      region:         grp.region,
-      grade:          grp.grade,
-      store_type:     grp.store_type,
-      channel:        grp.channel,
-      status:         grp.status,
-      forecastYear,
-      years,
-      byYear:         grp.byYear,
-      annualTotals,
-      yoyGrowth,
-      cagr,
-      seasonalByYear,
-      wtdSeasonalIdx,
-      wtdAnnualBase,
+      ...grp, forecastYear, years, byYear: grp.byYear,
+      annualTotals, yoyGrowth, cagr, seasonalByYear, wtdSeasonalIdx, wtdAnnualBase,
     };
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Build structured prompt — pre-computed analytics reduces hallucination risk
-// ─────────────────────────────────────────────────────────────────────────────
+// Build the markdown prompt Claude receives — pre-computed stats keep it on-formula
 function buildPrompt(analyticsArr) {
   const segments = analyticsArr.map(a => {
-    const header = [
-      `\n### Segment  Code: ${a.cust_old}`,
-      `Forecast Target: **${a.forecastYear}**`,
-    ];
-
-    // Monthly data table
-    const colHeader = `| Month | ${a.years.join(' | ')} |`;
-    const separator = `|-------|${a.years.map(() => '----------:').join('|')}|`;
-    const dataRows  = MONTHS.map((m, i) =>
+    const colHdr   = `| Month | ${a.years.join(' | ')} |`;
+    const sep      = `|-------|${a.years.map(() => '----------:').join('|')}|`;
+    const dataRows = MONTHS.map((m, i) =>
       `| ${MONTH_SHORT[i].padEnd(5)} | ${a.years.map(y => Math.round(a.byYear[y][m])).join(' | ')} |`
     );
-    const totalRow  = `| **TOTAL** | ${a.years.map(y => Math.round(a.annualTotals[y])).join(' | ')} |`;
-
-    // Growth stats
-    const growthLines = Object.entries(a.yoyGrowth)
-      .map(([period, pct]) => `- ${period}: **${pct > 0 ? '+' : ''}${pct}%**`);
-    growthLines.push(`- CAGR (${a.years[0]}–${a.years[a.years.length-1]}): **${a.cagr > 0 ? '+' : ''}${a.cagr}%**`);
-
-    // Seasonal index table
-    const siHeader = `| Month | ${a.years.map(y => `SI_${y}`).join(' | ')} | Weighted SI |`;
-    const siSep    = `|-------|${a.years.map(() => '-------:').join('|')}|----------:|`;
-    const siRows   = MONTHS.map((m, i) => {
+    const siHdr  = `| Month | ${a.years.map(y => `SI_${y}`).join(' | ')} | Weighted SI |`;
+    const siSep  = `|-------|${a.years.map(() => '-------:').join('|')}|----------:|`;
+    const siRows = MONTHS.map((m, i) => {
       const vals = a.years.map(y => (a.seasonalByYear[y]?.[m] ?? 0).toFixed(1)).join(' | ');
-      const wsi  = a.wtdSeasonalIdx[m].toFixed(1);
-      return `| ${MONTH_SHORT[i].padEnd(5)} | ${vals} | **${wsi}** |`;
+      return `| ${MONTH_SHORT[i].padEnd(5)} | ${vals} | ${a.wtdSeasonalIdx[m].toFixed(1)} |`;
     });
 
     return [
-      ...header,
-      '\n**Monthly Turnover (INR — plain integers, no comma formatting):**',
-      colHeader, separator, ...dataRows, totalRow,
-      '\n**YoY Growth Analysis:**',
-      ...growthLines,
-      `\n**Seasonal Indices (100 = average month; >100 = above-average month):**`,
-      siHeader, siSep, ...siRows,
-      `\n**Weighted Annual Base for ${a.forecastYear} projection:** ${Math.round(a.wtdAnnualBase)} (INR, plain integer)`,
+      `\n### Code: ${a.cust_old}  |  Forecast Year: ${a.forecastYear}`,
+      '\nMonthly Turnover (INR, plain integers — no commas):',
+      colHdr, sep, ...dataRows,
+      `| TOTAL | ${a.years.map(y => Math.round(a.annualTotals[y])).join(' | ')} |`,
+      '\nGrowth:',
+      ...Object.entries(a.yoyGrowth).map(([p, pct]) => `- ${p}: ${pct >= 0 ? '+' : ''}${pct}%`),
+      `- CAGR: ${a.cagr >= 0 ? '+' : ''}${a.cagr}%`,
+      '\nSeasonal Indices (100 = average month):',
+      siHdr, siSep, ...siRows,
+      `\nWeighted Annual Base: ${Math.round(a.wtdAnnualBase)} INR`,
+      // Festival factors — only show months where adjustment is non-trivial
+      ...(a.festivalFactor
+        ? ['\nFestival Adjustments (pre-computed, already applied):',
+           ...FY_MONTHS
+             .filter(m => Math.abs((a.festivalFactor[m] ?? 1) - 1) > 0.01)
+             .map(m => `- ${m.toUpperCase()}: ${((a.festivalFactor[m] - 1) * 100).toFixed(1)}% (festival shift vs historical avg)`)]
+        : []),
     ].join('\n');
   });
 
-  return `You are forecasting next-year sales. Use the pre-computed analytics below.
+  return `Forecast next-year sales for each segment. All values are in INR as plain integers (no commas, no currency symbols).
 
 ${segments.join('\n\n---\n')}
 
 ---
-## Forecasting Instructions
+Instructions:
+1. blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR, capped at ±80%
+2. annual_target  = Weighted_Annual_Base × (1 + blended_growth / 100)
+3. month_forecast = annual_target × (Weighted_SI / 1200)
+4. total_forecast = sum of all 12 months
+5. confidence: high = 3+ stable years | medium = 2 years or volatile | low = 1 year
 
-**Step 1 — Trend-adjusted annual target**
-Start from the Weighted Annual Base and apply the CAGR-informed growth rate.
-Use recent YoY growth trend (give more weight to the most recent YoY vs earlier ones).
-
-**Step 2 — Monthly distribution**
-Apply each month's Weighted Seasonal Index to distribute the annual target:
-  month_forecast = annual_target × (Weighted_SI / 1200)
-
-**Step 3 — Sanity check**
-Verify that sum(jan..dec) ≈ total_forecast.
-
-**Step 4 — Confidence assessment**
-- HIGH: 3+ years of stable seasonal patterns, consistent YoY trend
-- MEDIUM: Some volatility or only 2 data points
-- LOW: High variance or inconsistent patterns
-
-Return all results via the submit_forecast tool.`;
+Call submit_forecast with results for ALL ${analyticsArr.length} segment(s).`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pure algorithmic forecast — no AI, instant, scales to any number of segments
-//
-// Formula (same as what we asked Claude to do):
-//   blended_growth  = 0.7 × most_recent_YoY + 0.3 × CAGR   (if 2+ years)
-//   annual_target   = wtdAnnualBase × (1 + blended_growth/100)
-//   month_forecast  = annual_target × (wtdSeasonalIdx[m] / 1200)
-// ─────────────────────────────────────────────────────────────────────────────
+// Algorithmic fallback — same formula as the prompt tells Claude to use
+// blended_growth = 0.7 × recent_YoY + 0.3 × CAGR, capped ±80%
+// month = annual_target × (wtdSeasonalIdx[m] / 1200)
 function computeForecast(analyticsArr) {
   const forecasts = analyticsArr.map(a => {
-    const maxYear  = Math.max(...a.years);
+    const maxYear   = Math.max(...a.years);
     const lastTotal = a.annualTotals[maxYear];
+    const yoyKeys   = Object.keys(a.yoyGrowth).sort();
+    const recentYoy = yoyKeys.length > 0 ? a.yoyGrowth[yoyKeys[yoyKeys.length - 1]] : 0;
+    const rawGrowth = yoyKeys.length >= 2 ? 0.7 * recentYoy + 0.3 * a.cagr : recentYoy || a.cagr || 0;
+    const growth    = Math.max(-80, Math.min(80, rawGrowth));
 
-    // ── Growth rate ────────────────────────────────────────
-    const yoyKeys    = Object.keys(a.yoyGrowth).sort();
-    const recentYoy  = yoyKeys.length > 0
-      ? a.yoyGrowth[yoyKeys[yoyKeys.length - 1]]
-      : 0;
-    const rawGrowth  = yoyKeys.length >= 2
-      ? (0.7 * recentYoy + 0.3 * a.cagr)
-      : (recentYoy || a.cagr || 0);
-    const growth     = Math.max(-80, Math.min(80, rawGrowth));   // cap ±80%
-
-    // ── Annual target & monthly distribution ───────────────
     const annualTarget = a.wtdAnnualBase * (1 + growth / 100);
     const monthly      = {};
     MONTHS.forEach(m => {
-      monthly[m] = +(annualTarget * ((a.wtdSeasonalIdx[m] ?? 100) / 1200)).toFixed(2);
+      const si      = a.wtdSeasonalIdx[m] ?? 100;
+      const festAdj = a.festivalFactor?.[m] ?? 1;  // festival shift multiplier (e.g. 1.05 = +5%)
+      monthly[m] = +(annualTarget * si / 1200 * festAdj).toFixed(2);
     });
+
     const totalForecast  = +MONTHS.reduce((s, m) => s + monthly[m], 0).toFixed(2);
     const yoy_growth_pct = lastTotal !== 0
-      ? +((annualTarget - lastTotal) / Math.abs(lastTotal) * 100).toFixed(4)
-      : 0;
+      ? +((annualTarget - lastTotal) / Math.abs(lastTotal) * 100).toFixed(4) : 0;
 
-    // ── Confidence ─────────────────────────────────────────
     const allYoys    = Object.values(a.yoyGrowth);
     const maxSwing   = allYoys.length ? Math.max(...allYoys.map(Math.abs)) : 0;
     const confidence = a.years.length >= 3 && maxSwing < 40 ? 'high'
-      : a.years.length >= 2 && maxSwing < 70                ? 'medium'
-      :                                                        'low';
+      : a.years.length >= 2 && maxSwing < 70                ? 'medium' : 'low';
 
-    // ── Key insights ───────────────────────────────────────
-    const peakMonth   = MONTHS.reduce((b, m) => monthly[m] > monthly[b] ? m : b, MONTHS[0]);
-    const troughMonth = MONTHS.reduce((b, m) => monthly[m] < monthly[b] ? m : b, MONTHS[0]);
-    const key_insights = [
-      `Peak month: ${peakMonth.toUpperCase()} (₹${Math.round(monthly[peakMonth]).toLocaleString('en-IN')})`,
-      `Trough month: ${troughMonth.toUpperCase()} (₹${Math.round(monthly[troughMonth]).toLocaleString('en-IN')})`,
-      `Blended growth applied: ${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (70% recent YoY + 30% CAGR)`,
-      `Historical CAGR (${a.years[0]}–${maxYear}): ${a.cagr >= 0 ? '+' : ''}${a.cagr.toFixed(1)}%`,
-      `Weighted annual base: ₹${Math.round(a.wtdAnnualBase).toLocaleString('en-IN')}`,
-    ];
-    if (a.years.length === 1) key_insights.push('Single year of data — seasonal pattern assumed flat; confidence low.');
-
-    // ── Seasonal pattern summary ───────────────────────────
-    const topMonths = [...MONTHS]
-      .sort((x, y) => monthly[y] - monthly[x])
-      .slice(0, 3)
-      .map(m => m.toUpperCase());
+    const peakMonth   = MONTHS.reduce((b, m) => monthly[m] > monthly[b] ? m : b);
+    const troughMonth = MONTHS.reduce((b, m) => monthly[m] < monthly[b] ? m : b);
+    const topMonths   = [...MONTHS].sort((x, y) => monthly[y] - monthly[x]).slice(0, 3).map(m => m.toUpperCase());
     const siMin = Math.min(...MONTHS.map(m => a.wtdSeasonalIdx[m] ?? 100));
     const siMax = Math.max(...MONTHS.map(m => a.wtdSeasonalIdx[m] ?? 100));
-    const seasonal_pattern =
-      `Strong months: ${topMonths.join(', ')}. Seasonal index range: ${siMin.toFixed(0)}–${siMax.toFixed(0)}.`;
 
     return {
-      cust_old:       a.cust_old,
-      fiscvarnt:      a.fiscvarnt,
-      forecast_year:  a.forecastYear,
-      ...monthly,
-      total_forecast: totalForecast,
-      yoy_growth_pct,
-      confidence,
-      key_insights,
-      seasonal_pattern,
+      cust_old: a.cust_old, fiscvarnt: a.fiscvarnt, forecast_year: a.forecastYear,
+      ...monthly, total_forecast: totalForecast, yoy_growth_pct, confidence,
+      key_insights: [
+        `Peak: ${peakMonth.toUpperCase()} (₹${Math.round(monthly[peakMonth]).toLocaleString('en-IN')})`,
+        `Trough: ${troughMonth.toUpperCase()} (₹${Math.round(monthly[troughMonth]).toLocaleString('en-IN')})`,
+        `Growth applied: ${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (70% YoY + 30% CAGR)`,
+        `CAGR ${a.years[0]}–${maxYear}: ${a.cagr >= 0 ? '+' : ''}${a.cagr.toFixed(1)}%`,
+        `Weighted base: ₹${Math.round(a.wtdAnnualBase).toLocaleString('en-IN')}`,
+      ],
+      seasonal_pattern: `Strong months: ${topMonths.join(', ')}. SI range: ${siMin.toFixed(0)}–${siMax.toFixed(0)}.`,
     };
   });
 
-  // ── Portfolio-level summary ────────────────────────────────
   const grandTotal   = forecasts.reduce((s, f) => s + f.total_forecast, 0);
-  const highCount    = forecasts.filter(f => f.confidence === 'high').length;
-  const medCount     = forecasts.filter(f => f.confidence === 'medium').length;
   const forecastYear = forecasts[0]?.forecast_year ?? '';
+  const counts       = { high: 0, medium: 0, low: 0 };
+  forecasts.forEach(f => counts[f.confidence]++);
 
-  const executive_summary =
-    `Algorithmic forecast for ${forecasts.length} segments targeting FY${forecastYear}. ` +
-    `Total projected revenue: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. ` +
-    `Confidence breakdown: ${highCount} HIGH, ${medCount} MEDIUM, ${forecasts.length - highCount - medCount} LOW. ` +
-    `Methodology uses triangular-weighted seasonal decomposition with blended growth (70% recent YoY + 30% CAGR), capped at ±80%.`;
-
-  const methodology =
-    'Triangular-weighted seasonal decomposition. ' +
-    'Annual target = wtdAnnualBase × (1 + blended_growth), ' +
-    'where blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR (capped ±80%). ' +
-    'Monthly values = annual_target × (weightedSeasonalIndex / 1200).';
-
-  const risk_factors = [
-    'Growth rate blending assumes recent trend continues — significant business changes may invalidate this.',
-    'Seasonal indices derived from historical data; structural shifts in buying patterns are not captured.',
-    'External factors (macroeconomic, competition, supply disruptions) are not modelled.',
-  ];
-
-  return { forecasts, executive_summary, methodology, risk_factors };
+  return {
+    forecasts,
+    executive_summary: `Algorithmic forecast for ${forecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
+    methodology: 'Triangular-weighted seasonal decomposition. blended_growth = 0.7 × recent_YoY + 0.3 × CAGR (capped ±80%). month = annual_target × (SI / 1200).',
+    risk_factors: [
+      'Growth blending assumes recent trend continues — large business changes may invalidate.',
+      'Seasonal indices from historical data only — structural pattern shifts not captured.',
+    ],
+  };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AI batch forecasting — Haiku, 10 segments per call, tool_choice forced
-// Falls back to computeForecast() per segment if the API call fails
-// ─────────────────────────────────────────────────────────────────────────────
-// Dynamic batch config based on segment count
-function getBatchConfig(segmentCount) {
-  if (segmentCount <= 10)  return { batchSize: segmentCount, parallel: 1 };  // single call
-  if (segmentCount <= 50)  return { batchSize: 10, parallel: 3 };
-  if (segmentCount <= 200) return { batchSize: 10, parallel: 5 };
-  return                          { batchSize: 15, parallel: 5 };            // 200+ segments
+// Batch size config: small batches keep each prompt within token limits
+function getBatchConfig(n) {
+  if (n <= 10)  return { batchSize: n,  parallel: 1 };
+  if (n <= 50)  return { batchSize: 10, parallel: 3 };
+  if (n <= 200) return { batchSize: 10, parallel: 5 };
+  return              { batchSize: 15, parallel: 5 };
 }
 
 async function callBatch(batchAnalytics) {
@@ -370,165 +295,125 @@ async function callBatch(batchAnalytics) {
     model:       'claude-haiku-4-5-20251001',
     max_tokens:  8000,
     tool_choice: { type: 'any' },
-    system:
-      `You are a sales forecasting analyst. ` +
-      `Call submit_forecast with forecasts for ALL ${batchAnalytics.length} segment(s) provided. ` +
-      `Follow the 4-step methodology in the user message exactly.`,
-    messages: [{ role: 'user', content: buildPrompt(batchAnalytics) }],
-    tools:   [FORECAST_TOOL],
+    system:      `You are a sales forecasting analyst. Call submit_forecast for ALL ${batchAnalytics.length} segment(s). Follow the instructions exactly.`,
+    messages:    [{ role: 'user', content: buildPrompt(batchAnalytics) }],
+    tools:       [FORECAST_TOOL],
   });
 
   const toolBlock = msg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
   if (!toolBlock) throw new Error('tool_not_called');
+  if (!Array.isArray(toolBlock.input?.forecasts)) throw new Error('no_forecasts_array');
 
-  const result = toolBlock.input;
-  if (!Array.isArray(result.forecasts)) throw new Error('no_forecasts_array');
+  // batchMap for cust_old-based lookup (index-based is unsafe after filter)
+  const batchMap = Object.fromEntries(batchAnalytics.map(a => [a.cust_old, a]));
 
-  // Build a lookup by cust_old from the batch so we can recover missing values
-  const batchMap = {};
-  batchAnalytics.forEach(a => { batchMap[a.cust_old] = a; });
+  // Recover missing identity fields Claude sometimes omits (using same-index as last resort)
+  let forecasts = toolBlock.input.forecasts
+    .map((f, idx) => {
+      const ref = batchAnalytics[idx];
+      return {
+        ...f,
+        cust_old:      f.cust_old      || ref?.cust_old     || null,
+        fiscvarnt:     f.fiscvarnt     || ref?.fiscvarnt    || 'EBO',
+        forecast_year: f.forecast_year || ref?.forecastYear || null,
+      };
+    })
+    .filter(f => f.cust_old);
 
-  // Fix any forecast where Claude returned null/undefined for required identity fields
-  result.forecasts = result.forecasts.map((f, idx) => {
-    const ref = batchAnalytics[idx];   // same-index segment as safety fallback
-    return {
-      ...f,
-      cust_old:      f.cust_old      || ref?.cust_old      || null,
-      fiscvarnt:     f.fiscvarnt     || ref?.fiscvarnt     || 'EBO',
-      forecast_year: f.forecast_year || ref?.forecastYear  || null,
-    };
-  });
-
-  // Drop any row that still has no cust_old (should never happen after recovery)
-  result.forecasts = result.forecasts.filter(f => f.cust_old);
-
-  // Validate scale: AI forecast total must be at least 5% of historical annual total
-  // (guards against Claude misreading Indian-format numbers and generating 100x-too-small values)
-  result.forecasts = result.forecasts.map((f, idx) => {
-    const ref = batchAnalytics[idx];
-    if (!ref) return f;
-    const histMax = Math.max(...Object.values(ref.annualTotals || {}));
-    const aiTotal = parseFloat(f.total_forecast) || 0;
-    if (histMax > 0 && aiTotal < histMax * 0.05) {
-      // AI scale is wrong — replace with algorithmic forecast
-      const algoResult = computeForecast([ref]);
-      return algoResult.forecasts[0];
+  // Scale check: if AI total < 5% of historical max, Claude misread the numbers → use algorithm
+  forecasts = forecasts.map(f => {
+    const ref     = batchMap[f.cust_old];
+    const histMax = ref ? Math.max(0, ...Object.values(ref.annualTotals)) : 0;
+    if (histMax > 0 && (parseFloat(f.total_forecast) || 0) < histMax * 0.05) {
+      return computeForecast([ref]).forecasts[0];
     }
     return f;
   });
 
-  return result;
+  return { ...toolBlock.input, forecasts };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/forecast/generate
-// Streams SSE events back: status | thinking | complete | error
-// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/forecast/generate — streams SSE: status | thinking | complete | error
 router.post('/generate', async (req, res) => {
-  // SSE headers
-  res.setHeader('Content-Type',        'text/event-stream');
-  res.setHeader('Cache-Control',       'no-cache');
-  res.setHeader('Connection',          'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('X-Accel-Buffering',   'no');   // disable nginx/proxy buffering
+  res.setHeader('Content-Type',               'text/event-stream');
+  res.setHeader('Cache-Control',              'no-cache');
+  res.setHeader('Connection',                 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('X-Accel-Buffering',          'no');
   res.flushHeaders();
 
-  const emit = (event, data) =>
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const emit = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
   try {
-    // ── Step 1: Load historical data ────────────────────────
     emit('status', { step: 1, msg: '📊 Loading historical data from DB...' });
-
-    const { rows } = await pool.query(
-      'SELECT * FROM past_sales ORDER BY fy_year, code'
-    );
+    const { rows } = await pool.query('SELECT * FROM past_sales ORDER BY fy_year, code');
     if (!rows.length) throw new Error('No historical data found. Upload Excel first.');
+    emit('status', { step: 1, msg: `✅ ${rows.length} records across ${new Set(rows.map(r => r.fy_year)).size} year(s)` });
 
-    const yearSet = new Set(rows.map(r => r.fy_year));
-    emit('status', { step: 1, msg: `✅ ${rows.length} records loaded across ${yearSet.size} year(s)` });
-
-    // ── Step 2: Pre-compute analytics ───────────────────────
-    emit('status', { step: 2, msg: '🔢 Computing trends, seasonal indices, CAGR...' });
-    const analytics   = computeAnalytics(rows);
+    emit('status', { step: 2, msg: '🔢 Computing seasonal indices and trends...' });
+    const analytics    = computeAnalytics(rows);
     const forecastYear = analytics[0]?.forecastYear;
-    emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
-    // ── Step 3: AI forecast in parallel batches ─────────────
-    const { batchSize, parallel } = getBatchConfig(analytics.length);
-    const totalBatches = Math.ceil(analytics.length / batchSize);
-    emit('status', { step: 3, msg: `🤖 Claude Haiku forecasting ${analytics.length} segments — ${totalBatches} batch(es), ${parallel} parallel...` });
+    // Fetch festival scores for historical years + forecast year, then enrich analytics
+    const allYears        = [...new Set(rows.map(r => Number(r.fy_year))), forecastYear];
+    const festivalScores  = await fetchFestivalScores(allYears);
+    const richAnalytics   = addFestivalFactors(analytics, festivalScores);
 
+    const metaMap = Object.fromEntries(richAnalytics.map(a => [a.cust_old, a]));
+    emit('status', { step: 2, msg: `✅ ${richAnalytics.length} segments → forecasting FY${forecastYear}` });
+
+    const { batchSize, parallel } = getBatchConfig(richAnalytics.length);
     const batches = [];
-    for (let i = 0; i < analytics.length; i += batchSize) {
-      batches.push(analytics.slice(i, i + batchSize));
-    }
+    for (let i = 0; i < richAnalytics.length; i += batchSize) batches.push(richAnalytics.slice(i, i + batchSize));
+
+    emit('status', { step: 3, msg: `🤖 Forecasting ${richAnalytics.length} segments — ${batches.length} batch(es), ${parallel} parallel...` });
 
     const allForecasts = [];
-    let fallbackCount = 0;
+    let fallbackCount  = 0;
 
-    // Process MAX_PARALLEL batches at a time
     for (let i = 0; i < batches.length; i += parallel) {
-      const round     = Math.floor(i / parallel) + 1;
-      const totalRnds = Math.ceil(batches.length / parallel);
-      emit('thinking', { msg: `Round ${round}/${totalRnds} — batches ${i + 1}–${Math.min(i + parallel, batches.length)}...` });
-
-      const chunk = batches.slice(i, i + parallel);
+      emit('thinking', { msg: `Round ${Math.floor(i / parallel) + 1}/${Math.ceil(batches.length / parallel)}...` });
 
       const results = await Promise.all(
-        chunk.map(async (batch) => {
+        batches.slice(i, i + parallel).map(async batch => {
           try {
             return await callBatch(batch);
-          } catch (_err) {
-            // Fallback: algorithmic forecast for this batch's segments
+          } catch {
             fallbackCount += batch.length;
             return computeForecast(batch);
           }
         })
       );
-
       results.forEach(r => allForecasts.push(...r.forecasts));
     }
 
-    const done = allForecasts.length;
-    const fallbackMsg = fallbackCount ? ` (${fallbackCount} used algorithmic fallback)` : '';
-    emit('status', { step: 3, msg: `✅ Forecast complete — ${done} segment(s)${fallbackMsg}` });
+    emit('status', { step: 3, msg: `✅ ${allForecasts.length} forecasts done${fallbackCount ? ` (${fallbackCount} algorithmic fallback)` : ''}` });
 
-    // Build final payload with portfolio-level summary
     const grandTotal = allForecasts.reduce((s, f) => s + (parseFloat(f.total_forecast) || 0), 0);
-    const highCount  = allForecasts.filter(f => f.confidence === 'high').length;
+    const counts     = { high: 0, medium: 0, low: 0 };
+    allForecasts.forEach(f => counts[f.confidence]++);
+
     const payload = {
-      forecasts:         allForecasts,
-      executive_summary: `AI forecast for ${done} segments targeting FY${forecastYear}. ` +
-                         `Total projected revenue: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. ` +
-                         `Confidence: ${highCount} HIGH, ${allForecasts.filter(f=>f.confidence==='medium').length} MEDIUM, ${allForecasts.filter(f=>f.confidence==='low').length} LOW.`,
-      methodology:       'Claude Haiku (claude-haiku-4-5) with pre-computed triangular-weighted seasonal decomposition. ' +
-                         'Batched: 10 segments/call, 5 parallel. Algorithmic fallback on batch failure.',
-      risk_factors:      [
-        'AI forecast is based solely on historical sales patterns — external factors not modelled.',
-        'Low-confidence segments (single year of data) may have higher forecast error.',
-        'Batch processing: some segments may have used algorithmic fallback if API call failed.',
+      forecasts: allForecasts,
+      executive_summary: `AI forecast for ${allForecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
+      methodology: 'Claude Haiku with triangular-weighted seasonal decomposition. 10 segments/batch, 5 parallel. Algorithmic fallback on API failure or scale error.',
+      risk_factors: [
+        'Forecast based on historical patterns — external factors not modelled.',
+        'Low-confidence segments (single year of data) may have higher error.',
       ],
     };
 
-    // ── Step 4: Persist to DB ────────────────────────────────
-    emit('status', { step: 4, msg: '💾 Saving forecast to PostgreSQL...' });
-
+    emit('status', { step: 4, msg: '💾 Saving to PostgreSQL...' });
     const dbClient = await pool.connect();
     try {
       await dbClient.query('BEGIN');
-
-      // Build metadata lookup from analytics
-      const metaMap = {};
-      analytics.forEach(a => { metaMap[a.cust_old] = a; });
-
       for (const f of payload.forecasts) {
-        const meta = metaMap[f.cust_old] || {};
+        const m = metaMap[f.cust_old] || {};
         await dbClient.query(
           `INSERT INTO forecasts
              (cust_old, fiscvarnt, forecast_year,
               name, zone, region, grade, store_type, channel, status,
-              apr,may,jun,jul,aug,sep,oct,nov,dec,jan,feb,mar,
+              apr, may, jun, jul, aug, sep, oct, nov, dec, jan, feb, mar,
               total_forecast, yoy_growth_pct, confidence,
               key_insights, risk_factors, seasonal_pattern,
               executive_summary, methodology, generated_at)
@@ -537,14 +422,14 @@ router.post('/generate', async (req, res) => {
                    $23,$24,$25,$26,$27,$28,$29,$30,NOW())
            ON CONFLICT (cust_old, fiscvarnt, forecast_year) DO UPDATE SET
              name=$4, zone=$5, region=$6, grade=$7, store_type=$8, channel=$9, status=$10,
-             apr=$11,may=$12,jun=$13,jul=$14,aug=$15,sep=$16,oct=$17,
-             nov=$18,dec=$19,jan=$20,feb=$21,mar=$22,
+             apr=$11, may=$12, jun=$13, jul=$14, aug=$15, sep=$16, oct=$17,
+             nov=$18, dec=$19, jan=$20, feb=$21, mar=$22,
              total_forecast=$23, yoy_growth_pct=$24, confidence=$25,
              key_insights=$26, risk_factors=$27, seasonal_pattern=$28,
              executive_summary=$29, methodology=$30, generated_at=NOW()`,
           [
             f.cust_old, f.fiscvarnt, f.forecast_year,
-            meta.name, meta.zone, meta.region, meta.grade, meta.store_type, meta.channel, meta.status,
+            m.name, m.zone, m.region, m.grade, m.store_type, m.channel, m.status,
             f.apr, f.may, f.jun, f.jul, f.aug, f.sep,
             f.oct, f.nov, f.dec, f.jan, f.feb, f.mar,
             f.total_forecast, f.yoy_growth_pct, f.confidence,
@@ -556,7 +441,6 @@ router.post('/generate', async (req, res) => {
           ]
         );
       }
-
       await dbClient.query('COMMIT');
     } catch (dbErr) {
       await dbClient.query('ROLLBACK');
@@ -565,67 +449,53 @@ router.post('/generate', async (req, res) => {
       dbClient.release();
     }
 
-    emit('status', { step: 4, msg: '✅ Forecast saved to DB!' });
+    emit('status', { step: 4, msg: '✅ Saved!' });
     emit('complete', { forecast: payload, forecastYear });
 
   } catch (err) {
-    console.error('[forecast] error:', err.message);
+    console.error('[forecast/generate]', err.message);
     emit('error', { msg: err.message });
   } finally {
     res.end();
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/forecast/latest  — fetch stored forecasts for UI display
-// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/forecast/latest — fetch all stored forecasts for UI
 router.get('/latest', async (_req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM forecasts ORDER BY forecast_year DESC, cust_old, fiscvarnt'
-    );
+    const { rows } = await pool.query('SELECT * FROM forecasts ORDER BY forecast_year DESC, cust_old, fiscvarnt');
     res.json({ count: rows.length, data: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Structured tool for deep-dive recommendation (Haiku — fast & cheap)
-// ─────────────────────────────────────────────────────────────────────────────
+// Tool schema for store-level deep-dive recommendation
 const RECOMMEND_TOOL = {
   name: 'submit_recommendation',
-  description: 'Submit deep-dive reasoning, confidence breakdown, and actionable recommendations for a sales forecast row.',
+  description: 'Provide reasoning and actionable recommendations for a single store forecast.',
   input_schema: {
     type: 'object',
     additionalProperties: false,
     required: ['reasoning_summary', 'confidence_explanation', 'recommendations', 'monthly_highlights'],
     properties: {
-      reasoning_summary: {
-        type: 'string',
-        description: '3-5 sentences explaining WHY these forecast numbers were derived from the historical data.'
-      },
-      confidence_explanation: {
-        type: 'string',
-        description: 'Explain specifically what makes the confidence HIGH/MEDIUM/LOW for this forecast.'
-      },
+      reasoning_summary:      { type: 'string' },
+      confidence_explanation: { type: 'string' },
       recommendations: {
         type: 'array',
-        description: 'At least 3 specific actionable recommendations',
         items: {
           type: 'object',
           additionalProperties: false,
           required: ['action', 'rationale', 'priority'],
           properties: {
-            action:    { type: 'string', description: 'Specific actionable recommendation for the sales/business team' },
-            rationale: { type: 'string', description: 'Why this action is important based on the forecast data' },
-            priority:  { type: 'string', enum: ['high', 'medium', 'low'] }
-          }
-        }
+            action:    { type: 'string' },
+            rationale: { type: 'string' },
+            priority:  { type: 'string', enum: ['high', 'medium', 'low'] },
+          },
+        },
       },
       monthly_highlights: {
         type: 'array',
-        description: 'Call out 3-4 notable months (peak, trough, inflection points)',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -633,94 +503,74 @@ const RECOMMEND_TOOL = {
           properties: {
             month:          { type: 'string' },
             forecast_value: { type: 'number' },
-            note:           { type: 'string', description: 'Why this month is noteworthy' }
-          }
-        }
-      }
-    }
-  }
+            note:           { type: 'string' },
+          },
+        },
+      },
+    },
+  },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/forecast/recommend
-// Body: { cust_old, fiscvarnt, forecast_year }
-// Returns deep reasoning + recommendations using Claude Haiku (fast)
-// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/forecast/recommend — deep-dive AI analysis for one stored forecast row
 router.post('/recommend', async (req, res) => {
   const { cust_old, fiscvarnt, forecast_year } = req.body || {};
-
   if (!cust_old || !fiscvarnt || !forecast_year) {
     return res.status(400).json({ error: 'cust_old, fiscvarnt, forecast_year are required.' });
   }
 
   try {
-    // Fetch the stored forecast row
-    const { rows: fRows } = await pool.query(
-      `SELECT * FROM forecasts
-       WHERE cust_old=$1 AND fiscvarnt=$2 AND forecast_year=$3 LIMIT 1`,
-      [cust_old, fiscvarnt, Number(forecast_year)]
-    );
+    const [{ rows: fRows }, { rows: hRows }] = await Promise.all([
+      pool.query('SELECT * FROM forecasts WHERE cust_old=$1 AND fiscvarnt=$2 AND forecast_year=$3 LIMIT 1',
+        [cust_old, fiscvarnt, Number(forecast_year)]),
+      pool.query('SELECT * FROM past_sales WHERE code=$1 ORDER BY fy_year', [cust_old]),
+    ]);
     if (!fRows.length) return res.status(404).json({ error: 'Forecast not found. Generate it first.' });
-
-    // Fetch the historical baseline
-    const { rows: hRows } = await pool.query(
-      `SELECT * FROM past_sales WHERE code=$1 ORDER BY fy_year`,
-      [cust_old]
-    );
 
     const f = fRows[0];
 
-    // Build compact context for Haiku
     const histSummary = hRows.map(r =>
-      `${r.fy_year}: ${MONTHS.map(m => `${MONTH_SHORT[MONTHS.indexOf(m)]}=₹${Math.round(parseFloat(r[m])||0).toLocaleString('en-IN')}`).join(', ')}`
+      `${r.fy_year}: ${MONTHS.map((m, i) => `${MONTH_SHORT[i]}=${Math.round(parseFloat(r[m])||0)}`).join(', ')}`
     ).join('\n');
 
-    const fcstSummary = MONTHS
-      .map((m, i) => `${MONTH_SHORT[i]}: ₹${Math.round(parseFloat(f[m])||0).toLocaleString('en-IN')}`)
-      .join(' | ');
+    const fcstSummary = MONTHS.map((m, i) =>
+      `${MONTH_SHORT[i]}: ${Math.round(parseFloat(f[m])||0)}`
+    ).join(' | ');
 
-    const prompt = `You are a senior sales analyst. Analyze this forecast and provide actionable business intelligence.
+    const prompt = `Store: ${cust_old} | Year: ${forecast_year} | Confidence: ${f.confidence?.toUpperCase()} | YoY: ${Number(f.yoy_growth_pct).toFixed(2)}%
 
-STORE CODE: ${cust_old}  |  FORECAST YEAR: ${forecast_year}
-CONFIDENCE: ${f.confidence?.toUpperCase()}
-YoY GROWTH FORECAST: ${Number(f.yoy_growth_pct).toFixed(2)}%
-
-HISTORICAL DATA:
+Historical sales (INR):
 ${histSummary}
 
-${forecast_year} FORECAST (monthly):
+FY${forecast_year} Forecast:
 ${fcstSummary}
-TOTAL: ₹${Math.round(parseFloat(f.total_forecast)||0).toLocaleString('en-IN')}
+Total: ${Math.round(parseFloat(f.total_forecast)||0)}
 
-SEASONAL PATTERN NOTED: ${f.seasonal_pattern || 'N/A'}
-METHODOLOGY USED: ${f.methodology || 'N/A'}
+Seasonal pattern: ${f.seasonal_pattern || 'N/A'}
 
-Provide deep reasoning, confidence explanation, and 3-5 specific business recommendations.
-Call the submit_recommendation tool with your analysis.`;
+Give reasoning, confidence explanation, and 3-5 business recommendations via submit_recommendation.`;
 
     const response = await getAI().messages.create({
       model:      'claude-haiku-4-5',
       max_tokens: 4096,
-      system:     'You are a sharp, data-driven sales analytics expert. Always call the submit_recommendation tool.',
+      system:     'You are a data-driven sales analytics expert. Always call submit_recommendation.',
       messages:   [{ role: 'user', content: prompt }],
       tools:      [RECOMMEND_TOOL],
     });
 
     const toolBlock = response.content.find(b => b.type === 'tool_use' && b.name === 'submit_recommendation');
     if (!toolBlock) {
-      const fallback = response.content.find(b => b.type === 'text')?.text || 'No recommendation generated.';
-      return res.status(500).json({ error: fallback.slice(0, 300) });
+      const text = response.content.find(b => b.type === 'text')?.text || 'No recommendation generated.';
+      return res.status(500).json({ error: text.slice(0, 300) });
     }
 
     res.json({
-      cust_old, fiscvarnt, forecast_year,
-      confidence: f.confidence,
+      cust_old, fiscvarnt, forecast_year, confidence: f.confidence,
       ...toolBlock.input,
       tokens: { input: response.usage.input_tokens, output: response.usage.output_tokens },
     });
 
   } catch (err) {
-    console.error('[recommend] error:', err.message);
+    console.error('[forecast/recommend]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
