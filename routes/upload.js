@@ -91,8 +91,8 @@ function parseEboSheet(workbook, sheetDef) {
 const UPSERT_SQL = `
   INSERT INTO past_sales
     (code, name, zone, region, grade, store_type, channel, status, fy_year,
-     apr, may, jun, jul, aug, sep, oct, nov, dec, jan, feb, mar, fy_total, updated_at)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23, NOW())
+     apr, may, jun, jul, aug, sep, oct, nov, dec, jan, feb, mar, fy_total)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
   ON CONFLICT (code, fy_year) DO UPDATE SET
     name=EXCLUDED.name, zone=EXCLUDED.zone, region=EXCLUDED.region,
     grade=EXCLUDED.grade, store_type=EXCLUDED.store_type,
