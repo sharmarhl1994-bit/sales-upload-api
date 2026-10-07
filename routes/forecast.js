@@ -285,21 +285,17 @@ router.post('/generate', async (req, res) => {
     emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
     // ── Step 3: Call Claude Sonnet 5.5 ──────────────────────
-    emit('status', { step: 3, msg: '🤖 Claude Sonnet 5.5 is analyzing patterns (this may take 20–60 seconds)...' });
+    emit('status', { step: 3, msg: '🤖 Claude Opus 5.5 is analyzing patterns (this may take 30–90 seconds)...' });
     emit('thinking', { msg: 'Initializing AI analysis...' });
 
-    const systemPrompt = `You are an elite sales forecasting analyst with deep expertise in:
-- Time-series decomposition and trend analysis
-- Seasonal pattern recognition and adjustment
-- Statistical forecasting (weighted moving averages, exponential smoothing)
-- Retail and distribution sales cycles
-
-You produce precise, reproducible forecasts with clear quantitative reasoning.
-You MUST call the submit_forecast tool with your complete analysis — do not return plain text.`;
+    const systemPrompt = `You are an elite sales forecasting analyst.
+CRITICAL: Your ONLY valid response is a call to the submit_forecast tool.
+Do NOT write any text. Do NOT explain. Do NOT ask questions.
+Call submit_forecast immediately with the complete forecast for every segment.`;
 
     const userMessages = [{ role: 'user', content: buildPrompt(analytics) }];
     const aiConfig = {
-      model:      'claude-sonnet-5-5',
+      model:      'claude-opus-5-5',
       max_tokens: 16000,
       system:     systemPrompt,
       tools:      [FORECAST_TOOL],
@@ -308,15 +304,19 @@ You MUST call the submit_forecast tool with your complete analysis — do not re
     let finalMsg = await getAI().messages.create({ ...aiConfig, messages: userMessages });
     let toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
 
-    // If Claude returned text instead of calling the tool, do one nudge turn
-    if (!toolBlock) {
-      emit('thinking', { msg: '🔄 Requesting structured output from Claude...' });
+    // Retry up to 2 more times with escalating nudges
+    const nudges = [
+      'You must call the submit_forecast tool now. Do not write text.',
+      'CALL THE submit_forecast TOOL IMMEDIATELY. No text allowed.',
+    ];
+    for (let i = 0; !toolBlock && i < nudges.length; i++) {
+      emit('thinking', { msg: `🔄 Retry ${i + 1}: requesting tool call...` });
       finalMsg = await getAI().messages.create({
         ...aiConfig,
         messages: [
           ...userMessages,
-          { role: 'assistant', content: finalMsg.content },
-          { role: 'user',      content: 'Call the submit_forecast tool now with the complete forecast for all segments. Do not write text.' },
+          { role: 'assistant', content: finalMsg.content.length ? finalMsg.content : [{ type: 'text', text: '...' }] },
+          { role: 'user',      content: nudges[i] },
         ],
       });
       toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
