@@ -354,6 +354,36 @@ function computeForecast(analyticsArr) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AI batch forecasting — Haiku, 10 segments per call, tool_choice forced
+// Falls back to computeForecast() per segment if the API call fails
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic batch config based on segment count
+function getBatchConfig(segmentCount) {
+  if (segmentCount <= 10)  return { batchSize: segmentCount, parallel: 1 };  // single call
+  if (segmentCount <= 50)  return { batchSize: 10, parallel: 3 };
+  if (segmentCount <= 200) return { batchSize: 10, parallel: 5 };
+  return                          { batchSize: 15, parallel: 5 };            // 200+ segments
+}
+
+async function callBatch(batchAnalytics) {
+  const msg = await getAI().messages.create({
+    model:       'claude-haiku-4-5-20251001',
+    max_tokens:  8000,
+    tool_choice: { type: 'any' },
+    system:
+      `You are a sales forecasting analyst. ` +
+      `Call submit_forecast with forecasts for ALL ${batchAnalytics.length} segment(s) provided. ` +
+      `Follow the 4-step methodology in the user message exactly.`,
+    messages: [{ role: 'user', content: buildPrompt(batchAnalytics) }],
+    tools:   [FORECAST_TOOL],
+  });
+
+  const toolBlock = msg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
+  if (!toolBlock) throw new Error('tool_not_called');
+  return toolBlock.input;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/forecast/generate
 // Streams SSE events back: status | thinking | complete | error
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,12 +417,62 @@ router.post('/generate', async (req, res) => {
     const forecastYear = analytics[0]?.forecastYear;
     emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
-    // ── Step 3: Algorithmic forecast ────────────────────────
-    emit('status', { step: 3, msg: `⚡ Computing forecast for ${analytics.length} segment(s)...` });
+    // ── Step 3: AI forecast in parallel batches ─────────────
+    const { batchSize, parallel } = getBatchConfig(analytics.length);
+    const totalBatches = Math.ceil(analytics.length / batchSize);
+    emit('status', { step: 3, msg: `🤖 Claude Haiku forecasting ${analytics.length} segments — ${totalBatches} batch(es), ${parallel} parallel...` });
 
-    const payload = computeForecast(analytics);
+    const batches = [];
+    for (let i = 0; i < analytics.length; i += batchSize) {
+      batches.push(analytics.slice(i, i + batchSize));
+    }
 
-    emit('status', { step: 3, msg: `✅ Forecast computed — ${payload.forecasts.length} segment(s)` });
+    const allForecasts = [];
+    let fallbackCount = 0;
+
+    // Process MAX_PARALLEL batches at a time
+    for (let i = 0; i < batches.length; i += parallel) {
+      const round     = Math.floor(i / parallel) + 1;
+      const totalRnds = Math.ceil(batches.length / parallel);
+      emit('thinking', { msg: `Round ${round}/${totalRnds} — batches ${i + 1}–${Math.min(i + parallel, batches.length)}...` });
+
+      const chunk = batches.slice(i, i + parallel);
+
+      const results = await Promise.all(
+        chunk.map(async (batch) => {
+          try {
+            return await callBatch(batch);
+          } catch (_err) {
+            // Fallback: algorithmic forecast for this batch's segments
+            fallbackCount += batch.length;
+            return computeForecast(batch);
+          }
+        })
+      );
+
+      results.forEach(r => allForecasts.push(...r.forecasts));
+    }
+
+    const done = allForecasts.length;
+    const fallbackMsg = fallbackCount ? ` (${fallbackCount} used algorithmic fallback)` : '';
+    emit('status', { step: 3, msg: `✅ Forecast complete — ${done} segment(s)${fallbackMsg}` });
+
+    // Build final payload with portfolio-level summary
+    const grandTotal = allForecasts.reduce((s, f) => s + (parseFloat(f.total_forecast) || 0), 0);
+    const highCount  = allForecasts.filter(f => f.confidence === 'high').length;
+    const payload = {
+      forecasts:         allForecasts,
+      executive_summary: `AI forecast for ${done} segments targeting FY${forecastYear}. ` +
+                         `Total projected revenue: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. ` +
+                         `Confidence: ${highCount} HIGH, ${allForecasts.filter(f=>f.confidence==='medium').length} MEDIUM, ${allForecasts.filter(f=>f.confidence==='low').length} LOW.`,
+      methodology:       'Claude Haiku (claude-haiku-4-5) with pre-computed triangular-weighted seasonal decomposition. ' +
+                         'Batched: 10 segments/call, 5 parallel. Algorithmic fallback on batch failure.',
+      risk_factors:      [
+        'AI forecast is based solely on historical sales patterns — external factors not modelled.',
+        'Low-confidence segments (single year of data) may have higher forecast error.',
+        'Batch processing: some segments may have used algorithmic fallback if API call failed.',
+      ],
+    };
 
     // ── Step 4: Persist to DB ────────────────────────────────
     emit('status', { step: 4, msg: '💾 Saving forecast to PostgreSQL...' });
