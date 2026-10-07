@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Sales Dashboard — Upload & AI Forecast</title>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;min-height:100vh;padding:2rem}
@@ -197,6 +198,7 @@
       <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem">
         <button class="b-purple" id="btnFc" onclick="generateForecast()">✨ Generate AI Forecast</button>
         <button class="b-gray"   onclick="loadForecastTab()">🔄 Load Saved Forecast</button>
+        <button class="b-gray"   id="btnExport" onclick="exportForecast()" disabled>📥 Export Excel</button>
         <span style="font-size:.8rem;color:#a0aec0">Click any row → detailed reasoning & recommendations</span>
       </div>
       <div class="ai-log" id="aiLog"></div>
@@ -423,7 +425,11 @@ async function loadForecastTab(silent) {
 }
 
 // ── Render forecast rows in Tab 2 ─────────────────────────
+let _forecastRows = [];   // keep reference for export
+
 function renderForecastTable(rows) {
+  _forecastRows = rows;
+  document.getElementById('btnExport').disabled = !rows.length;
   const tb = document.getElementById('fcBody');
   if (!rows.length) { tb.innerHTML = `<tr><td colspan="20" class="empty">No forecast data</td></tr>`; return; }
 
@@ -608,6 +614,48 @@ function fetchSSE(url, handlers) {
       })();
     })
     .catch(e => handlers.error?.({ msg: e.message }));
+}
+
+// ── Export Forecast to Excel ───────────────────────────────
+function exportForecast() {
+  if (!_forecastRows.length) return;
+
+  const MO_FY  = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
+  const MO_HDR = ['APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC','JAN','FEB','MAR'];
+  const year   = _forecastRows[0]?.forecast_year ?? 'FY';
+
+  const hdr = ['Code','Name','Zone','Region','Grade','Type','Channel','Status','Year',
+    ...MO_HDR, 'Total','YoY%','Confidence'];
+
+  const data = _forecastRows.map(f => [
+    f.cust_old, f.name||'', f.zone||'', f.region||'', f.grade||'',
+    f.store_type||'', f.channel||'', f.status||'', f.forecast_year,
+    ...MO_FY.map(m => pf(f[m])),
+    pf(f.total_forecast),
+    +(Number(f.yoy_growth_pct||0).toFixed(2)),
+    (f.confidence||'').toUpperCase(),
+  ]);
+
+  // Grand total row
+  const totals = MO_FY.map(m => _forecastRows.reduce((s, f) => s + pf(f[m]), 0));
+  const grandTotal = _forecastRows.reduce((s, f) => s + pf(f.total_forecast), 0);
+  data.push(['TOTAL', 'ALL', '', '', '', '', '', '', '', ...totals, grandTotal, '', '']);
+
+  const ws = XLSX.utils.aoa_to_sheet([hdr, ...data]);
+
+  // Column widths
+  ws['!cols'] = [
+    {wch:8},{wch:28},{wch:10},{wch:10},{wch:6},{wch:8},{wch:8},{wch:8},{wch:6},
+    ...Array(12).fill({wch:13}),
+    {wch:14},{wch:7},{wch:11},
+  ];
+
+  // Freeze header row
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `FY${year} Forecast`);
+  XLSX.writeFile(wb, `FY${year}_Forecast.xlsx`);
 }
 
 // ── Load all ───────────────────────────────────────────────
