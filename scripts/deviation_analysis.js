@@ -1,9 +1,9 @@
 const XLSX = require('xlsx');
 
 const wb1     = XLSX.readFile('C:/Users/I546253/Downloads/EBO_FY_26-27_AOP_with_FY26-27_plan_target v1.0 (1) (1).xlsx');
-const wb2     = XLSX.readFile('C:/Users/I546253/Downloads/Store_Sales_2026.xlsx');
+const wb2     = XLSX.readFile('C:/Users/I546253/Downloads/FY2026_Forecast.xlsx');
 const actual  = XLSX.utils.sheet_to_json(wb1.Sheets['FY 26-27 Apr-Sep Actual'], { header: 1 });
-const fcData  = XLSX.utils.sheet_to_json(wb2.Sheets['Store Sales 2026'],        { header: 1 });
+const fcData  = XLSX.utils.sheet_to_json(wb2.Sheets['FY2026 Forecast'],         { header: 1 });
 
 const MONTHS = ['apr','may','jun','jul','aug','sep'];
 const MHD    = ['APR','MAY','JUN','JUL','AUG','SEP'];
@@ -17,14 +17,13 @@ actual.slice(1).forEach(r => {
     apr:r[8]||0, may:r[9]||0, jun:r[10]||0, jul:r[11]||0, aug:r[12]||0, sep:r[13]||0 };
 });
 
-// Parse forecast (BD → ABD code fix)
+// Parse forecast — new export: header row 0, APR at col 9, no code remapping needed
 const FC = {};
 fcData.slice(1).forEach(r => {
-  if (!r[0] || r[0]==='GRAND TOTAL') return;
-  let c = String(r[0]).trim();
-  if (c === 'BD') c = 'ABD';
-  FC[c] = { apr:r[8]||0, may:r[9]||0, jun:r[10]||0, jul:r[11]||0, aug:r[12]||0, sep:r[13]||0,
-    annualFc:r[17]||0, growth:r[18], rating:r[19] };
+  if (!r[0] || r[0]==='TOTAL') return;
+  const c = String(r[0]).trim();
+  FC[c] = { apr:r[9]||0, may:r[10]||0, jun:r[11]||0, jul:r[12]||0, aug:r[13]||0, sep:r[14]||0,
+    annualFc:r[21]||0, growth:r[22], rating:r[23] };
 });
 
 const matched = Object.keys(ACT).filter(c => FC[c]);
