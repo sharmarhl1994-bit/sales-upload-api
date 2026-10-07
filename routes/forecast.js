@@ -270,7 +270,7 @@ router.post('/generate', async (req, res) => {
     const msgStream = getAI().messages.stream({
       model:      'claude-sonnet-5-5',
       max_tokens: 16000,
-      thinking:   { type: 'adaptive', display: 'summarized' },
+      thinking:   { type: 'enabled', budget_tokens: 8000 },
       system: `You are an elite sales forecasting analyst with deep expertise in:
 - Time-series decomposition and trend analysis
 - Seasonal pattern recognition and adjustment
@@ -280,7 +280,8 @@ router.post('/generate', async (req, res) => {
 You produce precise, reproducible forecasts with clear quantitative reasoning.
 IMPORTANT: You MUST call the submit_forecast tool — do not return plain text.`,
       messages: [{ role: 'user', content: buildPrompt(analytics) }],
-      tools:   [FORECAST_TOOL],
+      tools:       [FORECAST_TOOL],
+      tool_choice: { type: 'tool', name: 'submit_forecast' },
     });
 
     // Forward summarized thinking snippets to client for UX feedback
