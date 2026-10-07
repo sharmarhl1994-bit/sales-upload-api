@@ -208,7 +208,7 @@ ${segments.join('\n\n---\n')}
 
 ---
 Instructions:
-1. blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR, capped at ±80%
+1. blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR, capped at ±40%
 2. annual_target  = Weighted_Annual_Base × (1 + blended_growth / 100)
 3. month_forecast = annual_target × (Weighted_SI / 1200)
 4. total_forecast = sum of all 12 months
@@ -227,7 +227,7 @@ function computeForecast(analyticsArr) {
     const yoyKeys   = Object.keys(a.yoyGrowth).sort();
     const recentYoy = yoyKeys.length > 0 ? a.yoyGrowth[yoyKeys[yoyKeys.length - 1]] : 0;
     const rawGrowth = yoyKeys.length >= 2 ? 0.7 * recentYoy + 0.3 * a.cagr : recentYoy || a.cagr || 0;
-    const growth    = Math.max(-80, Math.min(80, rawGrowth));
+    const growth    = Math.max(-40, Math.min(40, rawGrowth));
 
     const annualTarget = a.wtdAnnualBase * (1 + growth / 100);
     const monthly      = {};
@@ -278,6 +278,7 @@ function computeForecast(analyticsArr) {
     risk_factors: [
       'Growth blending assumes recent trend continues — large business changes may invalidate.',
       'Seasonal indices from historical data only — structural pattern shifts not captured.',
+      'Growth capped at ±40% to prevent over-extrapolation from short history.',
     ],
   };
 }
@@ -346,7 +347,9 @@ router.post('/generate', async (req, res) => {
 
   try {
     emit('status', { step: 1, msg: '📊 Loading historical data from DB...' });
-    const { rows } = await pool.query('SELECT * FROM past_sales ORDER BY fy_year, code');
+    const { rows } = await pool.query(
+      `SELECT * FROM past_sales WHERE LOWER(status) NOT IN ('inactive','closed','shut') ORDER BY fy_year, code`
+    );
     if (!rows.length) throw new Error('No historical data found. Upload Excel first.');
     emit('status', { step: 1, msg: `✅ ${rows.length} records across ${new Set(rows.map(r => r.fy_year)).size} year(s)` });
 
