@@ -45,7 +45,7 @@ Call this tool once with ALL segments. Every number must be a precise integer or
             'total_forecast','yoy_growth_pct','confidence','key_insights','seasonal_pattern'
           ],
           properties: {
-            cust_old:         { type: 'string' },
+            cust_old:         { type: 'string', description: 'Exact store code from the segment header, e.g. "STORE001"' },
             fiscvarnt:        { type: 'string' },
             forecast_year:    { type: 'integer' },
             jan:  { type: 'number', description: 'January forecast (INR)' },
@@ -380,7 +380,29 @@ async function callBatch(batchAnalytics) {
 
   const toolBlock = msg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
   if (!toolBlock) throw new Error('tool_not_called');
-  return toolBlock.input;
+
+  const result = toolBlock.input;
+  if (!Array.isArray(result.forecasts)) throw new Error('no_forecasts_array');
+
+  // Build a lookup by cust_old from the batch so we can recover missing values
+  const batchMap = {};
+  batchAnalytics.forEach(a => { batchMap[a.cust_old] = a; });
+
+  // Fix any forecast where Claude returned null/undefined for required identity fields
+  result.forecasts = result.forecasts.map((f, idx) => {
+    const ref = batchAnalytics[idx];   // same-index segment as safety fallback
+    return {
+      ...f,
+      cust_old:      f.cust_old      || ref?.cust_old      || null,
+      fiscvarnt:     f.fiscvarnt     || ref?.fiscvarnt     || 'EBO',
+      forecast_year: f.forecast_year || ref?.forecastYear  || null,
+    };
+  });
+
+  // Drop any row that still has no cust_old (should never happen after recovery)
+  result.forecasts = result.forecasts.filter(f => f.cust_old);
+
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
