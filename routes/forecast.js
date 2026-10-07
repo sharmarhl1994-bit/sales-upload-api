@@ -76,9 +76,9 @@ function computeAnalytics(rows) {
   const groups = {};
 
   rows.forEach(row => {
-    const key = `${row.cust_old}|${row.fiscvarnt}`;
-    if (!groups[key]) groups[key] = { cust_old: row.cust_old, fiscvarnt: row.fiscvarnt, byYear: {} };
-    groups[key].byYear[Number(row.year)] = MONTHS.reduce((acc, m) => {
+    const key = row.code;
+    if (!groups[key]) groups[key] = { cust_old: row.code, fiscvarnt: 'EBO', byYear: {} };
+    groups[key].byYear[Number(row.fy_year)] = MONTHS.reduce((acc, m) => {
       acc[m] = parseFloat(row[m]) || 0;
       return acc;
     }, {});
@@ -165,7 +165,7 @@ function computeAnalytics(rows) {
 function buildPrompt(analyticsArr) {
   const segments = analyticsArr.map(a => {
     const header = [
-      `\n### Segment  Customer: ${a.cust_old}  |  FiscalVariant: ${a.fiscvarnt}`,
+      `\n### Segment  Code: ${a.cust_old}`,
       `Forecast Target: **${a.forecastYear}**`,
     ];
 
@@ -250,11 +250,11 @@ router.post('/generate', async (req, res) => {
     emit('status', { step: 1, msg: '📊 Loading historical data from DB...' });
 
     const { rows } = await pool.query(
-      'SELECT * FROM past_sales ORDER BY year, cust_old, fiscvarnt'
+      'SELECT * FROM past_sales ORDER BY fy_year, code'
     );
     if (!rows.length) throw new Error('No historical data found. Upload Excel first.');
 
-    const yearSet = new Set(rows.map(r => r.year));
+    const yearSet = new Set(rows.map(r => r.fy_year));
     emit('status', { step: 1, msg: `✅ ${rows.length} records loaded across ${yearSet.size} year(s)` });
 
     // ── Step 2: Pre-compute analytics ───────────────────────
@@ -454,16 +454,15 @@ router.post('/recommend', async (req, res) => {
 
     // Fetch the historical baseline
     const { rows: hRows } = await pool.query(
-      `SELECT * FROM past_sales
-       WHERE cust_old=$1 AND fiscvarnt=$2 ORDER BY year`,
-      [cust_old, fiscvarnt]
+      `SELECT * FROM past_sales WHERE code=$1 ORDER BY fy_year`,
+      [cust_old]
     );
 
     const f = fRows[0];
 
     // Build compact context for Haiku
     const histSummary = hRows.map(r =>
-      `${r.year}: ${MONTHS.map(m => `${MONTH_SHORT[MONTHS.indexOf(m)]}=₹${Math.round(parseFloat(r[m])||0).toLocaleString('en-IN')}`).join(', ')}`
+      `${r.fy_year}: ${MONTHS.map(m => `${MONTH_SHORT[MONTHS.indexOf(m)]}=₹${Math.round(parseFloat(r[m])||0).toLocaleString('en-IN')}`).join(', ')}`
     ).join('\n');
 
     const fcstSummary = MONTHS
@@ -472,7 +471,7 @@ router.post('/recommend', async (req, res) => {
 
     const prompt = `You are a senior sales analyst. Analyze this forecast and provide actionable business intelligence.
 
-CUSTOMER: ${cust_old}  |  FISCAL VARIANT: ${fiscvarnt}  |  FORECAST YEAR: ${forecast_year}
+STORE CODE: ${cust_old}  |  FORECAST YEAR: ${forecast_year}
 CONFIDENCE: ${f.confidence?.toUpperCase()}
 YoY GROWTH FORECAST: ${Number(f.yoy_growth_pct).toFixed(2)}%
 

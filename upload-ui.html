@@ -181,11 +181,12 @@
       <div class="tbl-wrap">
         <table>
           <thead><tr>
-            <th>Customer</th><th>Fisc Var</th><th>Year</th>
-            <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th><th>MAY</th><th>JUN</th>
-            <th>JUL</th><th>AUG</th><th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+            <th>Code</th><th>Name</th><th>Zone</th><th>FY Year</th>
+            <th>APR</th><th>MAY</th><th>JUN</th><th>JUL</th><th>AUG</th><th>SEP</th>
+            <th>OCT</th><th>NOV</th><th>DEC</th><th>JAN</th><th>FEB</th><th>MAR</th>
+            <th>FY Total</th>
           </tr></thead>
-          <tbody id="histBody"><tr><td colspan="15" class="empty">Upload data ya Refresh click karo</td></tr></tbody>
+          <tbody id="histBody"><tr><td colspan="17" class="empty">Upload data ya Refresh click karo</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -200,18 +201,18 @@
       </div>
       <div class="ai-log" id="aiLog"></div>
 
-      <!-- Forecast table — same columns as Tab 1 + extra -->
+      <!-- Forecast table -->
       <div class="tbl-wrap" style="margin-top:1rem">
         <table>
           <thead><tr>
-            <th class="th-purple">Customer</th><th class="th-purple">Fisc Var</th><th class="th-purple">Year</th>
+            <th class="th-purple">Code</th><th class="th-purple">Year</th>
             <th class="th-purple">JAN</th><th class="th-purple">FEB</th><th class="th-purple">MAR</th>
             <th class="th-purple">APR</th><th class="th-purple">MAY</th><th class="th-purple">JUN</th>
             <th class="th-purple">JUL</th><th class="th-purple">AUG</th><th class="th-purple">SEP</th>
             <th class="th-purple">OCT</th><th class="th-purple">NOV</th><th class="th-purple">DEC</th>
             <th class="th-purple">TOTAL</th><th class="th-purple">YoY%</th><th class="th-purple">Confidence</th>
           </tr></thead>
-          <tbody id="fcBody"><tr><td colspan="18" class="empty">Generate forecast ya Load click karo</td></tr></tbody>
+          <tbody id="fcBody"><tr><td colspan="17" class="empty">Generate forecast ya Load click karo</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -288,6 +289,9 @@
 const API  = 'http://localhost:4000/api';
 const MO   = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 const MOS  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Fiscal year order for Tab 1 display
+const FY_MO  = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
+const FY_MOS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
 
 let selectedFile = null;
 let currentDetailRow = null;   // the forecast row being viewed
@@ -341,7 +345,7 @@ function switchTab(n) {
 // ── Historical table ───────────────────────────────────────
 async function loadHistTable() {
   const tb = document.getElementById('histBody');
-  tb.innerHTML = `<tr><td colspan="15" class="empty">Loading...</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="17" class="empty">Loading...</td></tr>`;
   try {
     const j = await (await fetch(`${API}/upload/data`)).json();
     const rows = j.data || [];
@@ -349,12 +353,15 @@ async function loadHistTable() {
     document.getElementById('stats').style.display = 'flex';
     tb.innerHTML = rows.length
       ? rows.map(r => `<tr>
-          <td><strong>${esc(r.cust_old)}</strong></td>
-          <td>${esc(r.fiscvarnt)}</td><td>${r.year}</td>
-          ${MO.map(m => { const v=pf(r[m]); return `<td class="r ${v<0?'neg':'pos'}">${v===0?'–':fmt(v)}</td>`; }).join('')}
+          <td><strong>${esc(r.code)}</strong></td>
+          <td>${esc(r.name||'')}</td>
+          <td>${esc(r.zone||'')}</td>
+          <td>${r.fy_year}</td>
+          ${FY_MO.map(m => { const v=pf(r[m]); return `<td class="r ${v<0?'neg':'pos'}">${v===0?'–':fmt(v)}</td>`; }).join('')}
+          <td class="r" style="font-weight:700">${pf(r.fy_total)===0?'–':fmt(pf(r.fy_total))}</td>
         </tr>`).join('')
-      : `<tr><td colspan="15" class="empty">Koi data nahi mila</td></tr>`;
-  } catch { tb.innerHTML = `<tr><td colspan="15" class="empty" style="color:red">❌ API connect error. npm start run karo.</td></tr>`; }
+      : `<tr><td colspan="17" class="empty">Koi data nahi mila</td></tr>`;
+  } catch { tb.innerHTML = `<tr><td colspan="17" class="empty" style="color:red">❌ API connect error. npm start run karo.</td></tr>`; }
 }
 
 // ── Generate AI Forecast (SSE) ─────────────────────────────
@@ -416,7 +423,6 @@ function renderForecastTable(rows) {
     const dataAttr = `data-row='${esc(JSON.stringify(f))}'`;
     return `<tr class="fc-row" onclick="openDetail(this)" ${dataAttr}>
       <td><strong>${esc(f.cust_old)}</strong></td>
-      <td>${esc(f.fiscvarnt)}</td>
       <td>${f.forecast_year}</td>
       ${MO.map(m => `<td class="r pos">${fmt(pf(f[m]))}</td>`).join('')}
       <td class="r" style="font-weight:700">${fmt(pf(f.total_forecast))}</td>
@@ -436,7 +442,7 @@ function openDetail(tr) {
 
   // Header
   document.getElementById('detTitle').textContent = `${row.cust_old} — Forecast ${row.forecast_year}`;
-  document.getElementById('detSub').textContent   = `Fiscal Variant: ${row.fiscvarnt}  |  YoY Growth: ${Number(row.yoy_growth_pct||0).toFixed(1)}%`;
+  document.getElementById('detSub').textContent   = `YoY Growth: ${Number(row.yoy_growth_pct||0).toFixed(1)}%`;
 
   const bc = row.confidence === 'high' ? 'bh' : row.confidence === 'medium' ? 'bm' : 'bl';
   const badge = document.getElementById('detBadge');
