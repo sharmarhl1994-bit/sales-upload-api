@@ -205,14 +205,18 @@
       <div class="tbl-wrap" style="margin-top:1rem">
         <table>
           <thead><tr>
-            <th class="th-purple">Code</th><th class="th-purple">Year</th>
-            <th class="th-purple">JAN</th><th class="th-purple">FEB</th><th class="th-purple">MAR</th>
+            <th class="th-purple">Code</th>
+            <th class="th-purple">Name</th>
+            <th class="th-purple">Zone</th>
+            <th class="th-purple">Region</th>
+            <th class="th-purple">Year</th>
             <th class="th-purple">APR</th><th class="th-purple">MAY</th><th class="th-purple">JUN</th>
             <th class="th-purple">JUL</th><th class="th-purple">AUG</th><th class="th-purple">SEP</th>
             <th class="th-purple">OCT</th><th class="th-purple">NOV</th><th class="th-purple">DEC</th>
+            <th class="th-purple">JAN</th><th class="th-purple">FEB</th><th class="th-purple">MAR</th>
             <th class="th-purple">TOTAL</th><th class="th-purple">YoY%</th><th class="th-purple">Confidence</th>
           </tr></thead>
-          <tbody id="fcBody"><tr><td colspan="17" class="empty">Generate forecast ya Load click karo</td></tr></tbody>
+          <tbody id="fcBody"><tr><td colspan="20" class="empty">Generate forecast ya Load click karo</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -388,33 +392,40 @@ function generateForecast() {
     thinking: d => lg('lg-t', '🧠 ' + d.msg),
     error:    d => { lg('lg-e', '❌ ' + d.msg); resetBtn(); },
     complete: d => {
-      lg('lg-s', '🎉 Done!');
+      lg('lg-s', `🎉 Done! ${d.forecast?.forecasts?.length || 0} segment(s) saved.`);
       resetBtn();
-      renderForecastTable(d.forecast?.forecasts || []);
+      // Fetch fresh from DB (includes metadata) and switch to Tab 2
+      loadForecastTab(true);
+      switchTab(2);
     },
     _done: () => resetBtn(),   // stream closed without complete (e.g. network drop)
   });
 }
 
 // ── Load saved forecast ────────────────────────────────────
-async function loadForecastTab() {
+async function loadForecastTab(silent) {
   try {
     const j = await (await fetch(`${API}/forecast/latest`)).json();
-    if (!j.data?.length) { alert('No saved forecast. Generate one first.'); return; }
+    if (!j.data?.length) {
+      if (!silent) alert('No saved forecast. Generate one first.');
+      return;
+    }
     renderForecastTable(j.data.map(r => ({
       ...r,
       key_insights: parseJ(r.key_insights),
       risk_factors: parseJ(r.risk_factors),
     })));
-    document.getElementById('aiLog').style.display = 'block';
-    document.getElementById('aiLog').innerHTML = '<div class="lg-s">✅ Forecast loaded from DB</div>';
-  } catch (e) { alert('Error: ' + e.message); }
+    if (!silent) {
+      document.getElementById('aiLog').style.display = 'block';
+      document.getElementById('aiLog').innerHTML = '<div class="lg-s">✅ Forecast loaded from DB</div>';
+    }
+  } catch (e) { if (!silent) alert('Error: ' + e.message); }
 }
 
 // ── Render forecast rows in Tab 2 ─────────────────────────
 function renderForecastTable(rows) {
   const tb = document.getElementById('fcBody');
-  if (!rows.length) { tb.innerHTML = `<tr><td colspan="18" class="empty">No forecast data</td></tr>`; return; }
+  if (!rows.length) { tb.innerHTML = `<tr><td colspan="20" class="empty">No forecast data</td></tr>`; return; }
 
   tb.innerHTML = rows.map(f => {
     const gc = f.yoy_growth_pct >= 0 ? 'grow-up' : 'grow-dn';
@@ -423,8 +434,11 @@ function renderForecastTable(rows) {
     const dataAttr = `data-row='${esc(JSON.stringify(f))}'`;
     return `<tr class="fc-row" onclick="openDetail(this)" ${dataAttr}>
       <td><strong>${esc(f.cust_old)}</strong></td>
+      <td>${esc(f.name||'–')}</td>
+      <td>${esc(f.zone||'–')}</td>
+      <td>${esc(f.region||'–')}</td>
       <td>${f.forecast_year}</td>
-      ${MO.map(m => `<td class="r pos">${fmt(pf(f[m]))}</td>`).join('')}
+      ${FY_MO.map(m => `<td class="r pos">${fmt(pf(f[m]))}</td>`).join('')}
       <td class="r" style="font-weight:700">${fmt(pf(f.total_forecast))}</td>
       <td class="r ${gc}">${gs}${Number(f.yoy_growth_pct).toFixed(1)}%</td>
       <td style="text-align:center">
@@ -613,6 +627,7 @@ function prog(p, hide) {
 
 // Auto-load on open
 loadHistTable();
+loadForecastTab(true);  // silently pre-fill Tab 2 if forecast exists
 </script>
 </body>
 </html>

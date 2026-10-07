@@ -14,8 +14,11 @@ function getAI() {
   return _ai;
 }
 
+// Calendar order (used for tool schema & analytics)
 const MONTHS      = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Indian fiscal year order (Apr = FY start) — used for DB inserts & display
+const FY_MONTHS   = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool definition — forced structured JSON output via tool_use
@@ -76,7 +79,19 @@ function computeAnalytics(rows) {
 
   rows.forEach(row => {
     const key = row.code;
-    if (!groups[key]) groups[key] = { cust_old: row.code, fiscvarnt: 'EBO', byYear: {} };
+    if (!groups[key]) groups[key] = {
+      cust_old:   row.code,
+      fiscvarnt:  'EBO',
+      // Store metadata from first row seen for this code
+      name:       row.name       || null,
+      zone:       row.zone       || null,
+      region:     row.region     || null,
+      grade:      row.grade      || null,
+      store_type: row.store_type || null,
+      channel:    row.channel    || null,
+      status:     row.status     || null,
+      byYear: {},
+    };
     groups[key].byYear[Number(row.fy_year)] = MONTHS.reduce((acc, m) => {
       acc[m] = parseFloat(row[m]) || 0;
       return acc;
@@ -145,6 +160,13 @@ function computeAnalytics(rows) {
     return {
       cust_old:       grp.cust_old,
       fiscvarnt:      grp.fiscvarnt,
+      name:           grp.name,
+      zone:           grp.zone,
+      region:         grp.region,
+      grade:          grp.grade,
+      store_type:     grp.store_type,
+      channel:        grp.channel,
+      status:         grp.status,
       forecastYear,
       years,
       byYear:         grp.byYear,
@@ -315,26 +337,35 @@ You MUST call the submit_forecast tool with your complete analysis — do not re
     try {
       await dbClient.query('BEGIN');
 
+      // Build metadata lookup from analytics
+      const metaMap = {};
+      analytics.forEach(a => { metaMap[a.cust_old] = a; });
+
       for (const f of payload.forecasts) {
+        const meta = metaMap[f.cust_old] || {};
         await dbClient.query(
           `INSERT INTO forecasts
              (cust_old, fiscvarnt, forecast_year,
-              jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,
+              name, zone, region, grade, store_type, channel, status,
+              apr,may,jun,jul,aug,sep,oct,nov,dec,jan,feb,mar,
               total_forecast, yoy_growth_pct, confidence,
               key_insights, risk_factors, seasonal_pattern,
               executive_summary, methodology, generated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                   $16,$17,$18,$19,$20,$21,$22,$23,NOW())
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                   $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+                   $23,$24,$25,$26,$27,$28,$29,$30,NOW())
            ON CONFLICT (cust_old, fiscvarnt, forecast_year) DO UPDATE SET
-             jan=$4,feb=$5,mar=$6,apr=$7,may=$8,jun=$9,jul=$10,
-             aug=$11,sep=$12,oct=$13,nov=$14,dec=$15,
-             total_forecast=$16, yoy_growth_pct=$17, confidence=$18,
-             key_insights=$19, risk_factors=$20, seasonal_pattern=$21,
-             executive_summary=$22, methodology=$23, generated_at=NOW()`,
+             name=$4, zone=$5, region=$6, grade=$7, store_type=$8, channel=$9, status=$10,
+             apr=$11,may=$12,jun=$13,jul=$14,aug=$15,sep=$16,oct=$17,
+             nov=$18,dec=$19,jan=$20,feb=$21,mar=$22,
+             total_forecast=$23, yoy_growth_pct=$24, confidence=$25,
+             key_insights=$26, risk_factors=$27, seasonal_pattern=$28,
+             executive_summary=$29, methodology=$30, generated_at=NOW()`,
           [
             f.cust_old, f.fiscvarnt, f.forecast_year,
-            f.jan, f.feb, f.mar, f.apr, f.may, f.jun,
-            f.jul, f.aug, f.sep, f.oct, f.nov, f.dec,
+            meta.name, meta.zone, meta.region, meta.grade, meta.store_type, meta.channel, meta.status,
+            f.apr, f.may, f.jun, f.jul, f.aug, f.sep,
+            f.oct, f.nov, f.dec, f.jan, f.feb, f.mar,
             f.total_forecast, f.yoy_growth_pct, f.confidence,
             JSON.stringify(f.key_insights),
             JSON.stringify(payload.risk_factors),
