@@ -194,9 +194,9 @@ function buildPrompt(analyticsArr) {
     const colHeader = `| Month | ${a.years.join(' | ')} |`;
     const separator = `|-------|${a.years.map(() => '----------:').join('|')}|`;
     const dataRows  = MONTHS.map((m, i) =>
-      `| ${MONTH_SHORT[i].padEnd(5)} | ${a.years.map(y => a.byYear[y][m].toLocaleString('en-IN')).join(' | ')} |`
+      `| ${MONTH_SHORT[i].padEnd(5)} | ${a.years.map(y => Math.round(a.byYear[y][m])).join(' | ')} |`
     );
-    const totalRow  = `| **TOTAL** | ${a.years.map(y => Math.round(a.annualTotals[y]).toLocaleString('en-IN')).join(' | ')} |`;
+    const totalRow  = `| **TOTAL** | ${a.years.map(y => Math.round(a.annualTotals[y])).join(' | ')} |`;
 
     // Growth stats
     const growthLines = Object.entries(a.yoyGrowth)
@@ -214,13 +214,13 @@ function buildPrompt(analyticsArr) {
 
     return [
       ...header,
-      '\n**Monthly Turnover (INR):**',
+      '\n**Monthly Turnover (INR — plain integers, no comma formatting):**',
       colHeader, separator, ...dataRows, totalRow,
       '\n**YoY Growth Analysis:**',
       ...growthLines,
       `\n**Seasonal Indices (100 = average month; >100 = above-average month):**`,
       siHeader, siSep, ...siRows,
-      `\n**Weighted Annual Base for ${a.forecastYear} projection:** ₹${Math.round(a.wtdAnnualBase).toLocaleString('en-IN')}`,
+      `\n**Weighted Annual Base for ${a.forecastYear} projection:** ${Math.round(a.wtdAnnualBase)} (INR, plain integer)`,
     ].join('\n');
   });
 
@@ -401,6 +401,21 @@ async function callBatch(batchAnalytics) {
 
   // Drop any row that still has no cust_old (should never happen after recovery)
   result.forecasts = result.forecasts.filter(f => f.cust_old);
+
+  // Validate scale: AI forecast total must be at least 5% of historical annual total
+  // (guards against Claude misreading Indian-format numbers and generating 100x-too-small values)
+  result.forecasts = result.forecasts.map((f, idx) => {
+    const ref = batchAnalytics[idx];
+    if (!ref) return f;
+    const histMax = Math.max(...Object.values(ref.annualTotals || {}));
+    const aiTotal = parseFloat(f.total_forecast) || 0;
+    if (histMax > 0 && aiTotal < histMax * 0.05) {
+      // AI scale is wrong — replace with algorithmic forecast
+      const algoResult = computeForecast([ref]);
+      return algoResult.forecasts[0];
+    }
+    return f;
+  });
 
   return result;
 }
