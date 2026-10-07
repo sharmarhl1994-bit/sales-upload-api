@@ -25,7 +25,6 @@ const FORECAST_TOOL = {
   name: 'submit_forecast',
   description: `Submit the complete monthly sales forecast for the next fiscal year.
 Call this tool once with ALL segments. Every number must be a precise integer or decimal in INR.`,
-  strict: true,
   input_schema: {
     type: 'object',
     additionalProperties: false,
@@ -263,37 +262,44 @@ router.post('/generate', async (req, res) => {
     const forecastYear = analytics[0]?.forecastYear;
     emit('status', { step: 2, msg: `✅ Analytics ready for ${analytics.length} segment(s) → forecasting year ${forecastYear}` });
 
-    // ── Step 3: Call Claude Opus 5.5 with streaming ─────────
+    // ── Step 3: Call Claude Sonnet 5.5 ──────────────────────
     emit('status', { step: 3, msg: '🤖 Claude Sonnet 5.5 is analyzing patterns (this may take 20–60 seconds)...' });
     emit('thinking', { msg: 'Initializing AI analysis...' });
 
-    const msgStream = getAI().messages.stream({
-      model:      'claude-sonnet-5-5',
-      max_tokens: 16000,
-      system: `You are an elite sales forecasting analyst with deep expertise in:
+    const systemPrompt = `You are an elite sales forecasting analyst with deep expertise in:
 - Time-series decomposition and trend analysis
 - Seasonal pattern recognition and adjustment
 - Statistical forecasting (weighted moving averages, exponential smoothing)
 - Retail and distribution sales cycles
 
 You produce precise, reproducible forecasts with clear quantitative reasoning.
-IMPORTANT: You MUST call the submit_forecast tool — do not return plain text.`,
-      messages: [{ role: 'user', content: buildPrompt(analytics) }],
-      tools:       [FORECAST_TOOL],
-      tool_choice: { type: 'tool', name: 'submit_forecast' },
-    });
+You MUST call the submit_forecast tool with your complete analysis — do not return plain text.`;
 
-    // Forward summarized thinking snippets to client for UX feedback
-    msgStream.on('inputJson', (_delta, snapshot) => {
-      if (snapshot && typeof snapshot === 'object' && snapshot.forecasts) {
-        emit('thinking', { msg: `🔄 Building forecast for ${snapshot.forecasts.length} segment(s)...` });
-      }
-    });
+    const userMessages = [{ role: 'user', content: buildPrompt(analytics) }];
+    const aiConfig = {
+      model:      'claude-sonnet-5-5',
+      max_tokens: 16000,
+      system:     systemPrompt,
+      tools:      [FORECAST_TOOL],
+    };
 
-    // Await full response
-    const finalMsg = await msgStream.finalMessage();
+    let finalMsg = await getAI().messages.create({ ...aiConfig, messages: userMessages });
+    let toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
 
-    const toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
+    // If Claude returned text instead of calling the tool, do one nudge turn
+    if (!toolBlock) {
+      emit('thinking', { msg: '🔄 Requesting structured output from Claude...' });
+      finalMsg = await getAI().messages.create({
+        ...aiConfig,
+        messages: [
+          ...userMessages,
+          { role: 'assistant', content: finalMsg.content },
+          { role: 'user',      content: 'Call the submit_forecast tool now with the complete forecast for all segments. Do not write text.' },
+        ],
+      });
+      toolBlock = finalMsg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
+    }
+
     if (!toolBlock) {
       const textFallback = finalMsg.content.find(b => b.type === 'text')?.text || '';
       throw new Error(`Claude did not call the forecast tool. Response: ${textFallback.slice(0, 300)}`);
@@ -385,7 +391,6 @@ router.get('/latest', async (_req, res) => {
 const RECOMMEND_TOOL = {
   name: 'submit_recommendation',
   description: 'Submit deep-dive reasoning, confidence breakdown, and actionable recommendations for a sales forecast row.',
-  strict: true,
   input_schema: {
     type: 'object',
     additionalProperties: false,
