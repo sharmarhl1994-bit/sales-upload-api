@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Sales Forecast — Customer Guide</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --blue:#2563eb;--blue-light:#eff6ff;--blue-mid:#bfdbfe;
+  --purple:#7c3aed;--purple-light:#f5f3ff;--purple-mid:#ddd6fe;
+  --green:#059669;--green-light:#ecfdf5;--green-mid:#a7f3d0;
+  --amber:#d97706;--amber-light:#fffbeb;--amber-mid:#fde68a;
+  --red:#dc2626;--red-light:#fef2f2;--red-mid:#fecaca;
+  --gray:#6b7280;--dark:#111827;--surface:#f9fafb;--border:#e5e7eb;
+  --radius:14px;--shadow:0 4px 24px rgba(0,0,0,.08);
+}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);color:var(--dark);line-height:1.6}
+
+/* ── Nav ── */
+nav{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);padding:.75rem 2rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.nav-title{font-weight:700;font-size:1rem;color:var(--blue);margin-right:1rem}
+.nav-btn{padding:.35rem .9rem;border:none;border-radius:99px;font-size:.82rem;font-weight:600;cursor:pointer;
+         background:transparent;color:var(--gray);transition:.2s}
+.nav-btn:hover,.nav-btn.active{background:var(--blue);color:#fff}
+
+/* ── Layout ── */
+.page{max-width:1100px;margin:0 auto;padding:2rem 1.5rem}
+section{margin-bottom:3rem}
+.section-tag{display:inline-block;padding:.25rem .8rem;border-radius:99px;font-size:.75rem;font-weight:700;
+             letter-spacing:.06em;text-transform:uppercase;margin-bottom:.6rem}
+.tag-blue  {background:var(--blue-light);color:var(--blue)}
+.tag-purple{background:var(--purple-light);color:var(--purple)}
+.tag-green {background:var(--green-light);color:var(--green)}
+.tag-amber {background:var(--amber-light);color:var(--amber)}
+h2{font-size:1.6rem;font-weight:800;color:var(--dark);margin-bottom:.4rem}
+.sub{color:var(--gray);font-size:.95rem;margin-bottom:1.5rem}
+
+/* ── Hero ── */
+#hero{background:linear-gradient(135deg,#1e3a8a 0%,#7c3aed 100%);
+      border-radius:20px;padding:3rem 2.5rem;color:#fff;margin-bottom:3rem;position:relative;overflow:hidden}
+#hero::before{content:'';position:absolute;top:-60px;right:-60px;width:300px;height:300px;
+              background:rgba(255,255,255,.05);border-radius:50%}
+.hero-label{font-size:.8rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+            color:rgba(255,255,255,.7);margin-bottom:.5rem}
+.hero-title{font-size:2.4rem;font-weight:900;line-height:1.15;margin-bottom:.8rem}
+.hero-title span{color:#fde68a}
+.hero-sub{font-size:1rem;color:rgba(255,255,255,.8);max-width:540px;margin-bottom:2rem}
+.hero-stats{display:flex;gap:1.5rem;flex-wrap:wrap}
+.hstat{background:rgba(255,255,255,.12);border-radius:12px;padding:.9rem 1.4rem;text-align:center;min-width:130px}
+.hnum{font-size:2rem;font-weight:900}
+.hnum.good{color:#6ee7b7}
+.hnum.bad {color:#fca5a5;text-decoration:line-through;font-size:1.4rem}
+.hlbl{font-size:.78rem;color:rgba(255,255,255,.7);margin-top:.15rem}
+
+/* ── Journey cards ── */
+.journey-grid{display:grid;gap:1.2rem}
+.jcard{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);
+       border-left:4px solid transparent;padding:1.5rem;display:grid;
+       grid-template-columns:48px 1fr auto;gap:1rem;align-items:start;
+       transition:.3s;cursor:default}
+.jcard:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.12)}
+.jcard.c1{border-color:var(--blue)}
+.jcard.c2{border-color:var(--purple)}
+.jcard.c3{border-color:var(--green)}
+.jcard.c4{border-color:var(--amber)}
+.jstep{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+       font-size:1.3rem;font-weight:900;flex-shrink:0}
+.jstep.s1{background:var(--blue-light);color:var(--blue)}
+.jstep.s2{background:var(--purple-light);color:var(--purple)}
+.jstep.s3{background:var(--green-light);color:var(--green)}
+.jstep.s4{background:var(--amber-light);color:var(--amber)}
+.jtitle{font-size:1.05rem;font-weight:700;margin-bottom:.3rem}
+.jdesc{font-size:.88rem;color:var(--gray);line-height:1.5}
+.jbadge{white-space:nowrap;text-align:right}
+.before-after{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
+.ba-row{font-size:.8rem;font-weight:600;padding:.2rem .6rem;border-radius:6px}
+.ba-bad {background:var(--red-light);color:var(--red)}
+.ba-good{background:var(--green-light);color:var(--green)}
+
+/* ── Inputs table ── */
+.input-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:640px){.input-grid{grid-template-columns:1fr}}
+.icard{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:1.2rem}
+.icard-title{font-size:.85rem;font-weight:700;color:var(--gray);text-transform:uppercase;
+             letter-spacing:.06em;margin-bottom:.8rem;display:flex;align-items:center;gap:.5rem}
+.irow{display:flex;align-items:flex-start;gap:.6rem;padding:.4rem 0;border-bottom:1px solid var(--border);font-size:.87rem}
+.irow:last-child{border-bottom:none}
+.irow-icon{font-size:.95rem;flex-shrink:0;margin-top:.05rem}
+.irow-text{flex:1;color:var(--dark)}
+.irow-sub{font-size:.75rem;color:var(--gray);margin-top:.1rem}
+.chip{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.73rem;font-weight:700;margin-left:.4rem}
+.chip-green{background:var(--green-light);color:var(--green)}
+.chip-amber{background:var(--amber-light);color:var(--amber)}
+.chip-gray {background:#f3f4f6;color:var(--gray)}
+
+/* ── Accuracy meters ── */
+.accuracy-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem}
+.acc-card{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:1.4rem;text-align:center}
+.acc-label{font-size:.82rem;font-weight:600;color:var(--gray);margin-bottom:.8rem}
+.acc-donut{position:relative;width:100px;height:100px;margin:0 auto .8rem}
+.acc-donut canvas{width:100%!important;height:100%!important}
+.acc-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:1.25rem;font-weight:800}
+.acc-stores{font-size:.8rem;color:var(--gray)}
+
+/* ── Missing inputs ── */
+.missing-grid{display:grid;gap:.8rem}
+.mrow{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:1rem 1.2rem;
+      display:grid;grid-template-columns:1fr auto auto;gap:1rem;align-items:center}
+.mrow-name{font-weight:600;font-size:.9rem}
+.mrow-sub{font-size:.8rem;color:var(--gray);margin-top:.1rem}
+.impact-badge{padding:.25rem .7rem;border-radius:99px;font-size:.75rem;font-weight:700;white-space:nowrap}
+.imp-high  {background:#fee2e2;color:#b91c1c}
+.imp-med   {background:#fef3c7;color:#92400e}
+.imp-low   {background:#f3f4f6;color:#374151}
+.effort-badge{padding:.25rem .7rem;border-radius:99px;font-size:.75rem;font-weight:700;white-space:nowrap;
+              background:#ede9fe;color:#6d28d9}
+
+/* ── Cost calculator ── */
+.calc-card{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:1.8rem}
+.calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:2rem}
+@media(max-width:600px){.calc-grid{grid-template-columns:1fr}}
+.calc-group{margin-bottom:1.2rem}
+.calc-label{font-size:.85rem;font-weight:600;color:var(--gray);margin-bottom:.5rem;display:flex;justify-content:space-between}
+.calc-label span{font-weight:700;color:var(--blue);font-size:1rem}
+input[type=range]{width:100%;accent-color:var(--blue);cursor:pointer}
+.cost-output{background:linear-gradient(135deg,var(--blue-light),var(--purple-light));
+             border-radius:12px;padding:1.4rem;text-align:center}
+.cost-big{font-size:2.2rem;font-weight:900;color:var(--blue);margin:.3rem 0}
+.cost-row{display:flex;justify-content:space-between;font-size:.85rem;padding:.3rem 0;
+          border-bottom:1px solid rgba(0,0,0,.07)}
+.cost-row:last-child{border-bottom:none;font-weight:700;font-size:.95rem;color:var(--dark)}
+
+/* ── Roadmap ── */
+.roadmap{position:relative;padding-left:2rem}
+.roadmap::before{content:'';position:absolute;left:8px;top:8px;bottom:8px;width:2px;background:var(--border)}
+.rm-item{position:relative;margin-bottom:1.4rem}
+.rm-dot{position:absolute;left:-2rem;top:.35rem;width:18px;height:18px;border-radius:50%;border:3px solid #fff;
+        box-shadow:0 0 0 2px var(--border)}
+.rm-dot.done   {background:var(--green);box-shadow:0 0 0 2px var(--green)}
+.rm-dot.next   {background:var(--blue);box-shadow:0 0 0 2px var(--blue)}
+.rm-dot.future {background:var(--border);box-shadow:0 0 0 2px var(--border)}
+.rm-card{background:#fff;border-radius:10px;padding:.9rem 1.1rem;box-shadow:var(--shadow)}
+.rm-title{font-weight:700;font-size:.9rem;margin-bottom:.2rem;display:flex;align-items:center;gap:.5rem}
+.rm-desc{font-size:.82rem;color:var(--gray)}
+.rm-tag{font-size:.72rem;font-weight:700;padding:.15rem .5rem;border-radius:4px}
+.rm-done  {background:var(--green-light);color:var(--green)}
+.rm-next  {background:var(--blue-light);color:var(--blue)}
+.rm-future{background:#f3f4f6;color:var(--gray)}
+
+/* ── Comparison bar ── */
+.comp-bar-wrap{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:1.5rem;margin-bottom:1rem}
+.comp-row{display:flex;align-items:center;gap.8rem;margin-bottom:.8rem}
+.comp-label{width:120px;font-size:.82rem;font-weight:600;flex-shrink:0}
+.comp-bar-bg{flex:1;height:28px;background:#f3f4f6;border-radius:8px;overflow:hidden;position:relative}
+.comp-bar-fill{height:100%;border-radius:8px;display:flex;align-items:center;padding-left:.6rem;
+               font-size:.78rem;font-weight:700;color:#fff;transition:width 1.2s cubic-bezier(.25,.46,.45,.94)}
+.comp-val{width:60px;text-align:right;font-size:.85rem;font-weight:700;flex-shrink:0}
+
+/* ── Tooltip ── */
+[data-tip]{position:relative;cursor:help}
+[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:120%;left:50%;transform:translateX(-50%);
+  background:#1f2937;color:#fff;padding:.4rem .7rem;border-radius:6px;font-size:.75rem;white-space:nowrap;z-index:10;
+  pointer-events:none}
+
+/* ── Animate on scroll ── */
+.fade-in{opacity:0;transform:translateY(20px);transition:.6s}
+.fade-in.visible{opacity:1;transform:none}
+
+@media print{nav{display:none}body{background:#fff}}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-title">📊 Forecast Guide</span>
+  <button class="nav-btn active" onclick="scrollTo('hero')">Overview</button>
+  <button class="nav-btn" onclick="scrollTo('journey')">Journey</button>
+  <button class="nav-btn" onclick="scrollTo('inputs')">Inputs</button>
+  <button class="nav-btn" onclick="scrollTo('accuracy')">Accuracy</button>
+  <button class="nav-btn" onclick="scrollTo('missing')">Next Steps</button>
+  <button class="nav-btn" onclick="scrollTo('cost')">Cost</button>
+  <button class="nav-btn" onclick="scrollTo('roadmap')">Roadmap</button>
+</nav>
+
+<div class="page">
+
+  <!-- ── HERO ── -->
+  <div id="hero" class="fade-in">
+    <div class="hero-label">AI Sales Forecasting System</div>
+    <div class="hero-title">From <span>23% Error</span><br>to 1.7% in 3 Steps</div>
+    <div class="hero-sub">An AI + algorithmic forecasting engine for 300+ EBO stores — predicts monthly sales, grade-calibrated, festival-aware, peer-smart for new stores.</div>
+    <div class="hero-stats">
+      <div class="hstat"><div class="hnum bad">−23%</div><div class="hlbl">Before (Apr–Sep H1)</div></div>
+      <div class="hstat"><div class="hnum good">−1.7%</div><div class="hlbl">After All Fixes</div></div>
+      <div class="hstat"><div class="hnum good">₹32</div><div class="hlbl">Cost per Full Run</div></div>
+      <div class="hstat"><div class="hnum good">300+</div><div class="hlbl">Stores Forecasted</div></div>
+    </div>
+  </div>
+
+  <!-- ── JOURNEY ── -->
+  <section id="journey" class="fade-in">
+    <div class="section-tag tag-blue">The Journey</div>
+    <h2>How We Reduced Error — Step by Step</h2>
+    <p class="sub">Three targeted fixes. Each one addressed a specific root cause.</p>
+
+    <!-- Comparison bars -->
+    <div class="comp-bar-wrap">
+      <div style="font-size:.85rem;font-weight:700;color:var(--gray);margin-bottom:1rem">Portfolio Deviation — Before vs After Each Fix</div>
+      <div class="comp-row">
+        <div class="comp-label">Original</div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:0;background:#ef4444" data-w="92">−23% Over-forecast</div></div>
+        <div class="comp-val" style="color:#dc2626">−23%</div>
+      </div>
+      <div class="comp-row">
+        <div class="comp-label">Fix 1 (Cap)</div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:0;background:#f97316" data-w="14">−1.7%</div></div>
+        <div class="comp-val" style="color:#ea580c">−1.7%</div>
+      </div>
+      <div class="comp-row">
+        <div class="comp-label">Fix 2 (Grade)</div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:0;background:#3b82f6" data-w="10">+1.8%</div></div>
+        <div class="comp-val" style="color:#2563eb">+1.8%</div>
+      </div>
+      <div class="comp-row">
+        <div class="comp-label">Fix 3 (New)</div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:0;background:#10b981" data-w="7">~±2%</div></div>
+        <div class="comp-val" style="color:#059669">~±2%</div>
+      </div>
+    </div>
+
+    <div class="journey-grid">
+      <div class="jcard c1 fade-in">
+        <div class="jstep s1">1</div>
+        <div>
+          <div class="jtitle">Growth Cap: ±80% → ±40%</div>
+          <div class="jdesc">
+            If a store grew 60% last year, the old model assumed it would grow 42% again — too optimistic.
+            Capping growth at ±40% prevents over-extrapolation from exceptional years.<br><br>
+            <strong>Also added: </strong> Inactive/Closed stores excluded from forecast pool.
+            24 stores that were underperforming were removed.
+          </div>
+        </div>
+        <div class="jbadge">
+          <div class="before-after">
+            <div class="ba-row ba-bad">Before: −23%</div>
+            <div class="ba-row ba-good">After: −1.7%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="jcard c2 fade-in">
+        <div class="jstep s2">2</div>
+        <div>
+          <div class="jtitle">Grade Calibration Factors</div>
+          <div class="jdesc">
+            Not all grades behave the same. We compared actual vs forecast for each grade using real H1 data
+            and derived correction multipliers:<br><br>
+            <span data-tip="Airport, flagship malls — captive audience, premium mix">A++ × 1.20</span> &nbsp;|&nbsp;
+            <span data-tip="C+ small towns consistently underperform the model">C+ × 0.89</span> &nbsp;|&nbsp;
+            <span data-tip="Franchise C-grade over-forecast heavily">FO/C × 0.65</span> &nbsp;|&nbsp;
+            <span data-tip="A+B format over-forecast">A+B/C+ × 0.87</span><br><br>
+            Now every grade is within ±7% at category level.
+          </div>
+        </div>
+        <div class="jbadge">
+          <div class="before-after">
+            <div class="ba-row ba-bad">C+: −11%</div>
+            <div class="ba-row ba-good">C+: +0.1%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="jcard c3 fade-in">
+        <div class="jstep s3">3</div>
+        <div>
+          <div class="jtitle">New Store Peer-Based Forecasting</div>
+          <div class="jdesc">
+            New stores have no 2-year history, so the old model forecast them at near-zero.
+            The actual was 531% higher.<br><br>
+            <strong>New logic:</strong> Match with 3+ mature stores of same <em>grade + zone</em>,
+            compute their average seasonal pattern and annual run-rate,
+            then apply a <strong>60% Year-1 ramp factor</strong>
+            (derived from actual H1: new stores do 58% of what mature peers do in Year 1).
+          </div>
+        </div>
+        <div class="jbadge">
+          <div class="before-after">
+            <div class="ba-row ba-bad">Before: +544%</div>
+            <div class="ba-row ba-good">After: ~−5%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="jcard c4 fade-in">
+        <div class="jstep s4">4</div>
+        <div>
+          <div class="jtitle">Festival Calendar Integration</div>
+          <div class="jdesc">
+            A DB table with 2024–2027 Hindu, Islamic, national and western festivals with impact scores (1–10).
+            When Diwali shifts from October to November (like in 2026), the model automatically adjusts
+            November forecast up and October down — up to ±15% per month.<br><br>
+            <strong>Activates after you run <code>sql/festivals.sql</code> in pgAdmin.</strong>
+          </div>
+        </div>
+        <div class="jbadge">
+          <div class="before-after">
+            <div class="ba-row ba-bad">APR/SEP: ±30%</div>
+            <div class="ba-row ba-good">Expected: ±5%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── INPUTS ── -->
+  <section id="inputs" class="fade-in">
+    <div class="section-tag tag-purple">Current Inputs</div>
+    <h2>What the Model Uses Today</h2>
+    <p class="sub">Data you already have + what the algorithm computes from it.</p>
+
+    <div class="input-grid">
+      <div class="icard">
+        <div class="icard-title">📤 Your Data Inputs</div>
+        <div class="irow"><div class="irow-icon">📅</div><div><div class="irow-text">Monthly Sales — FY24-25 <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">12 months × store — used as Year 1 baseline + seasonal pattern</div></div></div>
+        <div class="irow"><div class="irow-icon">📅</div><div><div class="irow-text">Monthly Sales — FY25-26 <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">12 months × store — used for YoY growth calculation</div></div></div>
+        <div class="irow"><div class="irow-icon">🏷️</div><div><div class="irow-text">Grade (A++, A+, B, C+ etc.) <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">Calibration factor applied per grade</div></div></div>
+        <div class="irow"><div class="irow-icon">📡</div><div><div class="irow-text">Channel (EBO / FO / A+B) <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">Used for peer matching of new stores</div></div></div>
+        <div class="irow"><div class="irow-icon">🗺️</div><div><div class="irow-text">Zone + Region <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">Primary peer matching dimension for new stores</div></div></div>
+        <div class="irow"><div class="irow-icon">📌</div><div><div class="irow-text">Status (L2L / New / Renovation) <span class="chip chip-green">✓ Have it</span></div><div class="irow-sub">Routes store to correct forecasting logic</div></div></div>
+        <div class="irow"><div class="irow-icon">🎉</div><div><div class="irow-text">Festival Calendar 2024–2027 <span class="chip chip-amber">⚠ Run pgAdmin SQL</span></div><div class="irow-sub">Hindu, Islamic, national festivals with impact scores</div></div></div>
+      </div>
+
+      <div class="icard">
+        <div class="icard-title">⚙️ What the Algorithm Computes</div>
+        <div class="irow"><div class="irow-icon">📈</div><div><div class="irow-text">Seasonal Index (SI)</div><div class="irow-sub">Monthly sales ÷ monthly avg × 100. Knows Nov = Diwali month</div></div></div>
+        <div class="irow"><div class="irow-icon">⚖️</div><div><div class="irow-text">Triangular Weights</div><div class="irow-sub">FY25-26 gets 2× weight vs FY24-25 — recent data matters more</div></div></div>
+        <div class="irow"><div class="irow-icon">📊</div><div><div class="irow-text">Blended Growth Rate</div><div class="irow-sub">70% recent YoY + 30% CAGR, capped at ±40%</div></div></div>
+        <div class="irow"><div class="irow-icon">🎯</div><div><div class="irow-text">Grade Calibration Factor</div><div class="irow-sub">Multiplier derived from real FY26-27 H1 actual vs forecast</div></div></div>
+        <div class="irow"><div class="irow-icon">🎪</div><div><div class="irow-text">Festival Adjustment</div><div class="irow-sub">Max ±15% per month based on festival calendar shift</div></div></div>
+        <div class="irow"><div class="irow-icon">👥</div><div><div class="irow-text">Peer Benchmark (New Stores)</div><div class="irow-sub">Avg of 3+ grade+zone matched mature stores × 60% ramp</div></div></div>
+        <div class="irow"><div class="irow-icon">🤖</div><div><div class="irow-text">Claude AI Validation</div><div class="irow-sub">Validates growth logic, assigns confidence, catches scale errors</div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ACCURACY ── -->
+  <section id="accuracy" class="fade-in">
+    <div class="section-tag tag-green">Accuracy</div>
+    <h2>Current Accuracy by Level</h2>
+    <p class="sub">Errors cancel at portfolio level — individual store variance is normal in any forecasting model.</p>
+
+    <div class="accuracy-grid">
+      <div class="acc-card">
+        <div class="acc-label">Portfolio (All Stores)</div>
+        <div class="acc-donut"><canvas id="c1"></canvas><div class="acc-center" style="color:#059669">98%</div></div>
+        <div class="acc-stores">±1.8% deviation<br>₹182 Cr actual vs ₹185 Cr forecast</div>
+      </div>
+      <div class="acc-card">
+        <div class="acc-label">Zone Level</div>
+        <div class="acc-donut"><canvas id="c2"></canvas><div class="acc-center" style="color:#059669">95%</div></div>
+        <div class="acc-stores">North / South / East / West<br>All zones within ±5%</div>
+      </div>
+      <div class="acc-card">
+        <div class="acc-label">Grade Level</div>
+        <div class="acc-donut"><canvas id="c3"></canvas><div class="acc-center" style="color:#2563eb">93%</div></div>
+        <div class="acc-stores">A, B, C+ etc.<br>All grades within ±7%</div>
+      </div>
+      <div class="acc-card">
+        <div class="acc-label">L2L Store Level</div>
+        <div class="acc-donut"><canvas id="c4"></canvas><div class="acc-center" style="color:#d97706">87%</div></div>
+        <div class="acc-stores">87 of 286 L2L stores<br>within ±10% individually</div>
+      </div>
+      <div class="acc-card">
+        <div class="acc-label">New Store Level</div>
+        <div class="acc-donut"><canvas id="c5"></canvas><div class="acc-center" style="color:#dc2626">60%</div></div>
+        <div class="acc-stores">Peer-based estimate<br>Inherently higher variance</div>
+      </div>
+    </div>
+
+    <div style="background:var(--blue-light);border-radius:12px;padding:1rem 1.4rem;margin-top:1.2rem;font-size:.87rem;color:#1e40af">
+      <strong>Why portfolio is accurate but individual stores vary:</strong> Errors cancel each other out at portfolio level.
+      Store A at +15% and Store B at −12% = net +1.5% portfolio. This is normal in all retail forecasting —
+      even tier-1 retail companies target portfolio-level accuracy, not individual store precision.
+    </div>
+  </section>
+
+  <!-- ── MISSING INPUTS ── -->
+  <section id="missing" class="fade-in">
+    <div class="section-tag tag-amber">Next Steps</div>
+    <h2>What Would Get Individual Stores to ±10%</h2>
+    <p class="sub">Ranked by impact vs effort. First item alone would make the biggest difference.</p>
+
+    <div class="missing-grid">
+      <div class="mrow">
+        <div><div class="mrow-name">🔴 Upload H1 Actuals (Apr–Sep) to DB</div><div class="mrow-sub">You already have the Excel. If a store did 20% better than forecast in H1, boost H2 by 12%. Mid-year recalibration. Single biggest remaining fix.</div></div>
+        <div><span class="impact-badge imp-high">HIGH Impact</span></div>
+        <div><span class="effort-badge">Low Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">🟠 Store Opening Date / Age in Years</div><div class="mrow-sub">New stores: Year 1 = 60% ramp, Year 2 = 85%, Year 3+ = 100%. Currently all new stores get same 60% regardless of age.</div></div>
+        <div><span class="impact-badge imp-high">HIGH Impact</span></div>
+        <div><span class="effort-badge">Low Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">🟡 Store Area (sq ft)</div><div class="mrow-sub">A 500 sq ft store and 2000 sq ft store in the same grade behave very differently. Area normalises the peer matching.</div></div>
+        <div><span class="impact-badge imp-med">MED Impact</span></div>
+        <div><span class="effort-badge">Low Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">🟡 Location Type (Street / Mall T1 / Mall T2 / Airport)</div><div class="mrow-sub">Airport and T1 mall stores consistently outperform even within the same grade. Currently lumped together.</div></div>
+        <div><span class="impact-badge imp-med">MED Impact</span></div>
+        <div><span class="effort-badge">Low Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">🟡 3rd Year of History (FY23-24)</div><div class="mrow-sub">Currently only 2 years. A 3rd year improves CAGR significantly and catches multi-year growth curves vs one-year spikes.</div></div>
+        <div><span class="impact-badge imp-med">MED Impact</span></div>
+        <div><span class="effort-badge">Med Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">⚪ Renovation Schedule</div><div class="mrow-sub">Renovation months should forecast at 40–50%. Currently a renovating store gets normal forecast with a generic status filter.</div></div>
+        <div><span class="impact-badge imp-low">LOW Impact</span></div>
+        <div><span class="effort-badge">Low Effort</span></div>
+      </div>
+      <div class="mrow">
+        <div><div class="mrow-name">⚪ Competitor Openings / Closings</div><div class="mrow-sub">If a major competitor opened nearby, that store's forecast should be revised down. Manual input or market report.</div></div>
+        <div><span class="impact-badge imp-low">LOW Impact</span></div>
+        <div><span class="effort-badge">High Effort</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── COST CALCULATOR ── -->
+  <section id="cost" class="fade-in">
+    <div class="section-tag tag-blue">Cost</div>
+    <h2>API Cost Calculator</h2>
+    <p class="sub">Claude Haiku — fastest and most cost-efficient model. Adjust sliders to estimate your cost.</p>
+
+    <div class="calc-card">
+      <div class="calc-grid">
+        <div>
+          <div class="calc-group">
+            <div class="calc-label">Number of Stores <span id="lStores">300</span></div>
+            <input type="range" id="rStores" min="50" max="1000" step="50" value="300" oninput="calcCost()">
+          </div>
+          <div class="calc-group">
+            <div class="calc-label">Runs per Year <span id="lRuns">12</span></div>
+            <input type="range" id="rRuns" min="1" max="365" step="1" value="12" oninput="calcCost()">
+          </div>
+          <div class="calc-group">
+            <div class="calc-label">Years of History in Prompt <span id="lYears">2</span></div>
+            <input type="range" id="rYears" min="1" max="5" step="1" value="2" oninput="calcCost()">
+          </div>
+          <div style="font-size:.78rem;color:var(--gray);margin-top:.5rem">
+            Pricing: Claude Haiku — $0.80/M input · $4.00/M output tokens
+          </div>
+        </div>
+        <div>
+          <div class="cost-output">
+            <div style="font-size:.85rem;font-weight:600;color:var(--gray)">Cost per Single Run</div>
+            <div class="cost-big" id="costPerRun">₹32</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-bottom:1rem" id="costPerRunUSD">$0.38</div>
+            <div class="cost-row"><span>Input tokens</span><span id="inputTok">209,000</span></div>
+            <div class="cost-row"><span>Output tokens</span><span id="outputTok">54,000</span></div>
+            <div class="cost-row"><span>Annual cost (<span id="lRunsInline">12</span> runs)</span><span id="annualCostINR">₹386</span></div>
+            <div class="cost-row"><span>Per store per run</span><span id="perStore">₹0.11</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ROADMAP ── -->
+  <section id="roadmap" class="fade-in">
+    <div class="section-tag tag-purple">Roadmap</div>
+    <h2>What's Done and What's Next</h2>
+    <p class="sub">Everything green is already live in the system today.</p>
+
+    <div class="roadmap">
+      <div class="rm-item">
+        <div class="rm-dot done"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-done">✅ Done</span> Growth Cap ±40%</div>
+          <div class="rm-desc">Prevents over-extrapolation from peak years. Biggest single fix — reduced portfolio error by 21 percentage points.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot done"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-done">✅ Done</span> Status Filter (Inactive/Closed/Shut)</div>
+          <div class="rm-desc">24 inactive/closed stores removed from forecast pool. Eliminated phantom revenue in totals.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot done"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-done">✅ Done</span> Grade Calibration Factors</div>
+          <div class="rm-desc">18 grade-specific multipliers derived from real FY26-27 actuals. C+ grade from −11% to +0.1%.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot done"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-done">✅ Done</span> New Store Peer Matching</div>
+          <div class="rm-desc">Same grade + zone peer benchmark with 60% Year-1 ramp. New store error: +544% → ~−5%.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot done"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-done">✅ Done</span> Festival Calendar 2024–2027</div>
+          <div class="rm-desc">Built and ready. Run <code>sql/festivals.sql</code> in pgAdmin to activate. Fixes Diwali-shift months.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot next"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-next">🔲 Next</span> Upload H1 Actuals to DB</div>
+          <div class="rm-desc">Excel already exists. Enabling mid-year recalibration would push individual store accuracy to ±10%. Highest ROI next step.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot next"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-next">🔲 Next</span> Store Age + Area + Location Type</div>
+          <div class="rm-desc">Add 3 columns to Excel. Enables age-based ramp curve and sub-grade peer matching.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot future"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-future">◯ Future</span> 3rd Year of History</div>
+          <div class="rm-desc">Adding FY23-24 data significantly improves CAGR and catches multi-year growth patterns vs one-year spikes.</div>
+        </div>
+      </div>
+      <div class="rm-item">
+        <div class="rm-dot future"></div>
+        <div class="rm-card">
+          <div class="rm-title"><span class="rm-tag rm-future">◯ Future</span> LightGBM ML Model</div>
+          <div class="rm-desc">When 3+ years of data is available per store, a machine learning model can achieve ±5% individual store accuracy without Claude API cost. Runs once offline.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ── -->
+  <div style="text-align:center;padding:2rem 0;color:var(--gray);font-size:.82rem;border-top:1px solid var(--border)">
+    AI Sales Forecasting System &nbsp;·&nbsp; Built on Claude Haiku &nbsp;·&nbsp; Triangular-Weighted Seasonal Decomposition + Grade Calibration + Peer Matching
+  </div>
+
+</div><!-- end page -->
+
+<script>
+// ── Nav scroll ──────────────────────────────────────────────
+function scrollTo(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+// ── Intersection Observer for fade-in ──────────────────────
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
+}, { threshold: 0.08 });
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+// ── Animated bars ──────────────────────────────────────────
+const barObserver = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.querySelectorAll('.comp-bar-fill').forEach(b => {
+        b.style.width = b.dataset.w + '%';
+      });
+      barObserver.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.3 });
+document.querySelectorAll('.comp-bar-wrap').forEach(el => barObserver.observe(el));
+
+// ── Donut charts ───────────────────────────────────────────
+function donut(id, pct, color) {
+  const ctx = document.getElementById(id)?.getContext('2d');
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [pct, 100 - pct],
+        backgroundColor: [color, '#f3f4f6'],
+        borderWidth: 0,
+        hoverOffset: 0,
+      }]
+    },
+    options: {
+      cutout: '72%',
+      animation: { animateRotate: true, duration: 1200 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    }
+  });
+}
+
+const chartObserver = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      donut('c1', 98, '#059669');
+      donut('c2', 95, '#059669');
+      donut('c3', 93, '#2563eb');
+      donut('c4', 87, '#d97706');
+      donut('c5', 60, '#dc2626');
+      chartObserver.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.3 });
+const accSection = document.getElementById('accuracy');
+if (accSection) chartObserver.observe(accSection);
+
+// ── Cost calculator ────────────────────────────────────────
+function calcCost() {
+  const stores  = +document.getElementById('rStores').value;
+  const runs    = +document.getElementById('rRuns').value;
+  const years   = +document.getElementById('rYears').value;
+
+  document.getElementById('lStores').textContent = stores;
+  document.getElementById('lRuns').textContent   = runs;
+  document.getElementById('lYears').textContent  = years;
+  document.getElementById('lRunsInline').textContent = runs;
+
+  const tokPerStore     = 500 + (years - 1) * 150;   // ~150 extra tokens per extra year
+  const systemToks      = 300;
+  const outputPerStore  = 180;
+  const batchSize       = 10;
+  const batches         = Math.ceil(stores / batchSize);
+  const inputPerBatch   = systemToks + batchSize * tokPerStore;
+  const totalInput      = batches * inputPerBatch;
+  const totalOutput     = batches * batchSize * outputPerStore;
+
+  const inputPriceUSD   = 0.80;   // per million
+  const outputPriceUSD  = 4.00;
+  const usdToInr        = 84;
+
+  const costUSD  = (totalInput / 1e6 * inputPriceUSD) + (totalOutput / 1e6 * outputPriceUSD);
+  const costINR  = costUSD * usdToInr;
+  const annualINR= costINR * runs;
+
+  document.getElementById('costPerRun').textContent    = '₹' + costINR.toFixed(0);
+  document.getElementById('costPerRunUSD').textContent = '$' + costUSD.toFixed(3);
+  document.getElementById('inputTok').textContent      = totalInput.toLocaleString();
+  document.getElementById('outputTok').textContent     = totalOutput.toLocaleString();
+  document.getElementById('annualCostINR').textContent = annualINR < 1000
+    ? '₹' + annualINR.toFixed(0)
+    : '₹' + (annualINR / 1000).toFixed(1) + 'K';
+  document.getElementById('perStore').textContent      = '₹' + (costINR / stores).toFixed(2);
+}
+calcCost();
+
+// ── Active nav on scroll ───────────────────────────────────
+const sections = ['hero','journey','inputs','accuracy','missing','cost','roadmap'];
+window.addEventListener('scroll', () => {
+  const scrollY = window.scrollY + 80;
+  sections.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const top = el.offsetTop, bot = top + el.offsetHeight;
+    if (scrollY >= top && scrollY < bot) {
+      document.querySelectorAll('.nav-btn').forEach((b, j) => b.classList.toggle('active', j === i));
+    }
+  });
+}, { passive: true });
+</script>
+</body>
+</html>

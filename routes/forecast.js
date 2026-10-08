@@ -41,6 +41,12 @@ const GRADE_FACTORS = {
   'A+B/C+':  0.87,   // 15 stores — A+B format C+ over-forecast
 };
 
+// South zone is systematically over-forecast by ~12.7% across A+++/A/B grades
+// Derived from FY26-27 H1 actuals: South actual ₹50.18 Cr vs forecast ₹57.5 Cr
+const ZONE_FACTORS = {
+  'South': 0.88,
+};
+
 // New store ramp: year-1 stores typically do 60% of what a mature peer does
 // (derived from FY26-27 H1: new store actual = 6.71 Cr vs peer-avg-based 11.64 Cr = 57.6%)
 const NEW_STORE_RAMP = 0.60;
@@ -123,48 +129,6 @@ function addFestivalFactors(analyticsArr, festivalScores) {
   });
 }
 
-// Claude tool schema — forces structured forecast output
-const FORECAST_TOOL = {
-  name: 'submit_forecast',
-  description: 'Submit monthly sales forecasts for all segments. All values are plain integers in INR (no commas, no symbols).',
-  input_schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['forecasts', 'executive_summary', 'methodology', 'risk_factors'],
-    properties: {
-      forecasts: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'cust_old','fiscvarnt','forecast_year',
-            'jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec',
-            'total_forecast','yoy_growth_pct','confidence','key_insights','seasonal_pattern',
-          ],
-          properties: {
-            cust_old:         { type: 'string', description: 'Exact store code from segment header, e.g. "AMB"' },
-            fiscvarnt:        { type: 'string' },
-            forecast_year:    { type: 'integer' },
-            jan: { type: 'number' }, feb: { type: 'number' }, mar: { type: 'number' },
-            apr: { type: 'number' }, may: { type: 'number' }, jun: { type: 'number' },
-            jul: { type: 'number' }, aug: { type: 'number' }, sep: { type: 'number' },
-            oct: { type: 'number' }, nov: { type: 'number' }, dec: { type: 'number' },
-            total_forecast:   { type: 'number' },
-            yoy_growth_pct:   { type: 'number' },
-            confidence:       { type: 'string', enum: ['high','medium','low'] },
-            key_insights:     { type: 'array', items: { type: 'string' } },
-            seasonal_pattern: { type: 'string' },
-          },
-        },
-      },
-      executive_summary: { type: 'string' },
-      methodology:       { type: 'string' },
-      risk_factors:      { type: 'array', items: { type: 'string' } },
-    },
-  },
-};
-
 // Group DB rows by store, compute annual totals, YoY growth, CAGR, and weighted seasonal indices
 function computeAnalytics(rows) {
   const groups = {};
@@ -238,58 +202,6 @@ function computeAnalytics(rows) {
   });
 }
 
-// Build the markdown prompt Claude receives — pre-computed stats keep it on-formula
-function buildPrompt(analyticsArr) {
-  const segments = analyticsArr.map(a => {
-    const colHdr   = `| Month | ${a.years.join(' | ')} |`;
-    const sep      = `|-------|${a.years.map(() => '----------:').join('|')}|`;
-    const dataRows = MONTHS.map((m, i) =>
-      `| ${MONTH_SHORT[i].padEnd(5)} | ${a.years.map(y => Math.round(a.byYear[y][m])).join(' | ')} |`
-    );
-    const siHdr  = `| Month | ${a.years.map(y => `SI_${y}`).join(' | ')} | Weighted SI |`;
-    const siSep  = `|-------|${a.years.map(() => '-------:').join('|')}|----------:|`;
-    const siRows = MONTHS.map((m, i) => {
-      const vals = a.years.map(y => (a.seasonalByYear[y]?.[m] ?? 0).toFixed(1)).join(' | ');
-      return `| ${MONTH_SHORT[i].padEnd(5)} | ${vals} | ${a.wtdSeasonalIdx[m].toFixed(1)} |`;
-    });
-
-    return [
-      `\n### Code: ${a.cust_old}  |  Grade: ${a.grade||'–'}  |  Channel: ${a.channel||'–'}  |  Forecast Year: ${a.forecastYear}`,
-      '\nMonthly Turnover (INR, plain integers — no commas):',
-      colHdr, sep, ...dataRows,
-      `| TOTAL | ${a.years.map(y => Math.round(a.annualTotals[y])).join(' | ')} |`,
-      '\nGrowth:',
-      ...Object.entries(a.yoyGrowth).map(([p, pct]) => `- ${p}: ${pct >= 0 ? '+' : ''}${pct}%`),
-      `- CAGR: ${a.cagr >= 0 ? '+' : ''}${a.cagr}%`,
-      '\nSeasonal Indices (100 = average month):',
-      siHdr, siSep, ...siRows,
-      `\nWeighted Annual Base: ${Math.round(a.wtdAnnualBase)} INR`,
-      // Festival factors — only show months where adjustment is non-trivial
-      ...(a.festivalFactor
-        ? ['\nFestival Adjustments (pre-computed, already applied):',
-           ...FY_MONTHS
-             .filter(m => Math.abs((a.festivalFactor[m] ?? 1) - 1) > 0.01)
-             .map(m => `- ${m.toUpperCase()}: ${((a.festivalFactor[m] - 1) * 100).toFixed(1)}% (festival shift vs historical avg)`)]
-        : []),
-    ].join('\n');
-  });
-
-  return `Forecast next-year sales for each segment. All values are in INR as plain integers (no commas, no currency symbols).
-
-${segments.join('\n\n---\n')}
-
----
-Instructions:
-1. blended_growth = 0.7 × most_recent_YoY + 0.3 × CAGR, capped at ±40%
-2. annual_target  = Weighted_Annual_Base × (1 + blended_growth / 100)
-3. Apply grade calibration to annual_target: A++×1.20, A+×1.07, A×0.97, B+×1.01, B×0.99, C+×0.89, C×0.77, A+++×0.93, FO/C+×0.87, A+B/C+×0.87 (others×1.0)
-4. month_forecast = annual_target × (Weighted_SI / 1200)
-5. total_forecast = sum of all 12 months
-6. confidence: high = 3+ stable years | medium = 2 years or volatile | low = 1 year
-
-Call submit_forecast with results for ALL ${analyticsArr.length} segment(s).`;
-}
-
 // Algorithmic fallback — same formula as the prompt tells Claude to use
 // blended_growth = 0.7 × recent_YoY + 0.3 × CAGR, capped ±80%
 // month = annual_target × (wtdSeasonalIdx[m] / 1200)
@@ -303,7 +215,8 @@ function computeForecast(analyticsArr) {
     const growth    = Math.max(-40, Math.min(40, rawGrowth));
 
     const gradeFactor  = GRADE_FACTORS[a.grade] ?? 1.0;
-    const annualTarget = a.wtdAnnualBase * (1 + growth / 100) * gradeFactor;
+    const zoneFactor   = ZONE_FACTORS[a.zone]  ?? 1.0;
+    const annualTarget = lastTotal * (1 + growth / 100) * gradeFactor * zoneFactor;
     const monthly      = {};
     MONTHS.forEach(m => {
       const si      = a.wtdSeasonalIdx[m] ?? 100;
@@ -334,7 +247,7 @@ function computeForecast(analyticsArr) {
         `Trough: ${troughMonth.toUpperCase()} (₹${Math.round(monthly[troughMonth]).toLocaleString('en-IN')})`,
         `Growth applied: ${growth >= 0 ? '+' : ''}${growth.toFixed(1)}% (70% YoY + 30% CAGR)`,
         `CAGR ${a.years[0]}–${maxYear}: ${a.cagr >= 0 ? '+' : ''}${a.cagr.toFixed(1)}%`,
-        `Weighted base: ₹${Math.round(a.wtdAnnualBase).toLocaleString('en-IN')}`,
+        `Last year actual: ₹${Math.round(lastTotal).toLocaleString('en-IN')}`,
       ],
       seasonal_pattern: `Strong months: ${topMonths.join(', ')}. SI range: ${siMin.toFixed(0)}–${siMax.toFixed(0)}.`,
     };
@@ -348,64 +261,13 @@ function computeForecast(analyticsArr) {
   return {
     forecasts,
     executive_summary: `Algorithmic forecast for ${forecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
-    methodology: 'Triangular-weighted seasonal decomposition. blended_growth = 0.7 × recent_YoY + 0.3 × CAGR (capped ±40%). Grade calibration factors applied (derived from FY26-27 H1 actuals). month = annual_target × grade_factor × (SI / 1200).',
+    methodology: 'Triangular-weighted seasonal decomposition. blended_growth = 0.7 × recent_YoY + 0.3 × CAGR (capped ±40%). Growth applied to last year actual. Grade + zone calibration factors applied (derived from FY26-27 H1 actuals). month = last_year_actual × growth × grade_factor × (SI / 1200).',
     risk_factors: [
       'Growth blending assumes recent trend continues — large business changes may invalidate.',
       'Seasonal indices from historical data only — structural pattern shifts not captured.',
       'Growth capped at ±40% to prevent over-extrapolation from short history.',
     ],
   };
-}
-
-// Batch size config: small batches keep each prompt within token limits
-function getBatchConfig(n) {
-  if (n <= 10)  return { batchSize: n,  parallel: 1 };
-  if (n <= 50)  return { batchSize: 10, parallel: 3 };
-  if (n <= 200) return { batchSize: 10, parallel: 5 };
-  return              { batchSize: 15, parallel: 5 };
-}
-
-async function callBatch(batchAnalytics) {
-  const msg = await getAI().messages.create({
-    model:       'claude-haiku-4-5-20251001',
-    max_tokens:  8000,
-    tool_choice: { type: 'any' },
-    system:      `You are a sales forecasting analyst. Call submit_forecast for ALL ${batchAnalytics.length} segment(s). Follow the instructions exactly.`,
-    messages:    [{ role: 'user', content: buildPrompt(batchAnalytics) }],
-    tools:       [FORECAST_TOOL],
-  });
-
-  const toolBlock = msg.content.find(b => b.type === 'tool_use' && b.name === 'submit_forecast');
-  if (!toolBlock) throw new Error('tool_not_called');
-  if (!Array.isArray(toolBlock.input?.forecasts)) throw new Error('no_forecasts_array');
-
-  // batchMap for cust_old-based lookup (index-based is unsafe after filter)
-  const batchMap = Object.fromEntries(batchAnalytics.map(a => [a.cust_old, a]));
-
-  // Recover missing identity fields Claude sometimes omits (using same-index as last resort)
-  let forecasts = toolBlock.input.forecasts
-    .map((f, idx) => {
-      const ref = batchAnalytics[idx];
-      return {
-        ...f,
-        cust_old:      f.cust_old      || ref?.cust_old     || null,
-        fiscvarnt:     f.fiscvarnt     || ref?.fiscvarnt    || 'EBO',
-        forecast_year: f.forecast_year || ref?.forecastYear || null,
-      };
-    })
-    .filter(f => f.cust_old);
-
-  // Scale check: if AI total < 5% of historical max, Claude misread the numbers → use algorithm
-  forecasts = forecasts.map(f => {
-    const ref     = batchMap[f.cust_old];
-    const histMax = ref ? Math.max(0, ...Object.values(ref.annualTotals)) : 0;
-    if (histMax > 0 && (parseFloat(f.total_forecast) || 0) < histMax * 0.05) {
-      return computeForecast([ref]).forecasts[0];
-    }
-    return f;
-  });
-
-  return { ...toolBlock.input, forecasts };
 }
 
 // POST /api/forecast/generate — streams SSE: status | thinking | complete | error
@@ -448,32 +310,12 @@ router.post('/generate', async (req, res) => {
     if (newForecasts.length)
       emit('status', { step: 2, msg: `🆕 ${newForecasts.length} new/renovation stores → peer-based forecast (${NEW_STORE_RAMP * 100}% ramp)` });
 
-    const { batchSize, parallel } = getBatchConfig(regularAnalytics.length);
-    const batches = [];
-    for (let i = 0; i < regularAnalytics.length; i += batchSize) batches.push(regularAnalytics.slice(i, i + batchSize));
+    emit('status', { step: 3, msg: `🔢 Computing forecasts for ${regularAnalytics.length} L2L segments...` });
 
-    emit('status', { step: 3, msg: `🤖 Forecasting ${regularAnalytics.length} L2L segments — ${batches.length} batch(es), ${parallel} parallel...` });
+    const regularResult = computeForecast(regularAnalytics);
+    const allForecasts  = [...newForecasts, ...regularResult.forecasts];
 
-    const allForecasts = [...newForecasts];
-    let fallbackCount  = 0;
-
-    for (let i = 0; i < batches.length; i += parallel) {
-      emit('thinking', { msg: `Round ${Math.floor(i / parallel) + 1}/${Math.ceil(batches.length / parallel)}...` });
-
-      const results = await Promise.all(
-        batches.slice(i, i + parallel).map(async batch => {
-          try {
-            return await callBatch(batch);
-          } catch {
-            fallbackCount += batch.length;
-            return computeForecast(batch);
-          }
-        })
-      );
-      results.forEach(r => allForecasts.push(...r.forecasts));
-    }
-
-    emit('status', { step: 3, msg: `✅ ${allForecasts.length} forecasts done${fallbackCount ? ` (${fallbackCount} algorithmic fallback)` : ''}${newForecasts.length ? ` + ${newForecasts.length} peer-based` : ''}` });
+    emit('status', { step: 3, msg: `✅ ${allForecasts.length} forecasts done${newForecasts.length ? ` (${newForecasts.length} peer-based)` : ''}` });
 
     const grandTotal = allForecasts.reduce((s, f) => s + (parseFloat(f.total_forecast) || 0), 0);
     const counts     = { high: 0, medium: 0, low: 0 };
@@ -481,12 +323,9 @@ router.post('/generate', async (req, res) => {
 
     const payload = {
       forecasts: allForecasts,
-      executive_summary: `AI forecast for ${allForecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
-      methodology: 'Claude Haiku with triangular-weighted seasonal decomposition. 10 segments/batch, 5 parallel. Algorithmic fallback on API failure or scale error.',
-      risk_factors: [
-        'Forecast based on historical patterns — external factors not modelled.',
-        'Low-confidence segments (single year of data) may have higher error.',
-      ],
+      executive_summary: `Forecast for ${allForecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
+      methodology: regularResult.methodology,
+      risk_factors: regularResult.risk_factors,
     };
 
     emit('status', { step: 4, msg: '💾 Saving to PostgreSQL...' });
