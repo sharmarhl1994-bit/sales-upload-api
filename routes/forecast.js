@@ -266,8 +266,81 @@ function computeForecast(analyticsArr, cfg) {
   };
 }
 
-// POST /api/forecast/generate — streams SSE: status | thinking | complete | error
-router.post('/generate', async (req, res) => {
+// ─── AI Enrichment Tool — batch qualitative enrichment per store ───────────────
+const AI_ENRICH_TOOL = {
+  name: 'submit_ai_enrichment',
+  description: 'Qualitative AI enrichment for a batch of store forecasts.',
+  input_schema: {
+    type: 'object',
+    required: ['stores'],
+    properties: {
+      stores: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['cust_old', 'confidence', 'key_insights', 'seasonal_pattern', 'risk_factors'],
+          additionalProperties: false,
+          properties: {
+            cust_old:        { type: 'string' },
+            confidence:      { type: 'string', enum: ['high', 'medium', 'low'] },
+            key_insights:    { type: 'array', items: { type: 'string' }, maxItems: 4 },
+            seasonal_pattern:{ type: 'string' },
+            risk_factors:    { type: 'array', items: { type: 'string' }, maxItems: 3 },
+          },
+        },
+      },
+    },
+  },
+};
+
+// Call Claude Haiku to enrich a batch of pre-computed forecasts with qualitative analysis
+async function enrichBatchWithAI(batch, metaMap) {
+  const storeLines = batch.map(f => {
+    const a      = metaMap[f.cust_old] || {};
+    const yoyStr = Object.entries(a.yoyGrowth || {}).slice(-2)
+      .map(([k, v]) => `${k}:${v >= 0 ? '+' : ''}${v}%`).join(', ');
+    const monthStr = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar']
+      .map(m => `${m[0].toUpperCase()}${m.slice(1,3)}:${Math.round((parseFloat(f[m]) || 0) / 1000)}K`)
+      .join(' ');
+    return `[${f.cust_old}] ${a.name || '?'} | Zone:${a.zone || '?'} Grade:${a.grade || '?'} | ` +
+      `YoY:${yoyStr} CAGR:${(a.cagr || 0).toFixed(1)}% | ${a.years?.length || 0} yrs data\n` +
+      `  ${monthStr} | Annual:${Math.round((parseFloat(f.total_forecast) || 0) / 1000)}K Growth:${Number(f.yoy_growth_pct).toFixed(1)}%`;
+  }).join('\n\n');
+
+  const prompt = `India fashion retail analyst. Enrich ${batch.length} store forecasts qualitatively.
+
+For each store provide:
+- confidence: "high" (3+ data years, growth swing <30%), "medium" (2+ years or swing <50%), "low" (otherwise)
+- key_insights: 3-4 business observations (trend direction, peak month, grade context, specific risks)
+- seasonal_pattern: 1 sentence (e.g., "Peaks Oct-Nov festival season; troughs Feb-Mar post-winter")
+- risk_factors: 2-3 specific business risks for this store's profile
+
+Stores:
+${storeLines}
+
+Respond ONLY via submit_ai_enrichment tool.`;
+
+  const response = await getAI().messages.create({
+    model:      'claude-haiku-4-5',
+    max_tokens: 4000,
+    messages:   [{ role: 'user', content: prompt }],
+    tools:      [AI_ENRICH_TOOL],
+  });
+
+  const tb = response.content.find(b => b.type === 'tool_use' && b.name === 'submit_ai_enrichment');
+  if (!tb?.input?.stores) return batch;
+
+  const enrichMap = Object.fromEntries(tb.input.stores.map(s => [s.cust_old, s]));
+  return batch.map(f => {
+    const e = enrichMap[f.cust_old];
+    if (!e) return f;
+    return { ...f, confidence: e.confidence, key_insights: e.key_insights,
+      seasonal_pattern: e.seasonal_pattern, risk_factors: e.risk_factors };
+  });
+}
+
+// Shared SSE generation logic — useAI=false → pure numerical, useAI=true → numerical + Claude enrichment
+async function runForecastGeneration(_req, res, useAI) {
   res.setHeader('Content-Type',               'text/event-stream');
   res.setHeader('Cache-Control',              'no-cache');
   res.setHeader('Connection',                 'keep-alive');
@@ -289,20 +362,18 @@ router.post('/generate', async (req, res) => {
     const analytics    = computeAnalytics(rows);
     const forecastYear = analytics[0]?.forecastYear;
 
-    // Fetch festival scores for historical years + forecast year, then enrich analytics
-    const allYears        = [...new Set(rows.map(r => Number(r.fy_year))), forecastYear];
-    const festivalScores  = await fetchFestivalScores(allYears);
-    const richAnalytics   = addFestivalFactors(analytics, festivalScores);
+    const allYears       = [...new Set(rows.map(r => Number(r.fy_year))), forecastYear];
+    const festivalScores = await fetchFestivalScores(allYears);
+    const richAnalytics  = addFestivalFactors(analytics, festivalScores);
 
     const metaMap = Object.fromEntries(richAnalytics.map(a => [a.cust_old, a]));
     emit('status', { step: 2, msg: `✅ ${richAnalytics.length} segments → forecasting FY${forecastYear}` });
 
-    // Split: new/insufficient stores use peer-based logic; rest use algorithmic forecast
-    const isNew = a => ['new', 'renovation'].includes((a.status || '').toLowerCase()) || a.years.length < 2;
+    const isNew            = a => ['new', 'renovation'].includes((a.status || '').toLowerCase()) || a.years.length < 2;
     const newAnalytics     = richAnalytics.filter(isNew);
     const regularAnalytics = richAnalytics.filter(a => !isNew(a));
 
-    const cfg = await loadConfig();
+    const cfg          = await loadConfig();
     const newStoreRamp = cfg.config.new_store_ramp ?? 0.60;
 
     const newForecasts = computeNewStoreForecast(newAnalytics, richAnalytics, newStoreRamp, cfg);
@@ -310,11 +381,24 @@ router.post('/generate', async (req, res) => {
       emit('status', { step: 2, msg: `🆕 ${newForecasts.length} new/renovation stores → peer-based forecast (${(newStoreRamp * 100).toFixed(0)}% ramp)` });
 
     emit('status', { step: 3, msg: `🔢 Computing forecasts for ${regularAnalytics.length} L2L segments...` });
-
     const regularResult = computeForecast(regularAnalytics, cfg);
-    const allForecasts  = [...newForecasts, ...regularResult.forecasts];
+    let allForecasts    = [...newForecasts, ...regularResult.forecasts];
+    emit('status', { step: 3, msg: `✅ ${allForecasts.length} numerical forecasts computed${newForecasts.length ? ` (${newForecasts.length} peer-based)` : ''}` });
 
-    emit('status', { step: 3, msg: `✅ ${allForecasts.length} forecasts done${newForecasts.length ? ` (${newForecasts.length} peer-based)` : ''}` });
+    // AI enrichment step — only for /generate-ai
+    if (useAI) {
+      const BATCH_SIZE = 15;
+      const batches    = [];
+      for (let i = 0; i < allForecasts.length; i += BATCH_SIZE) batches.push(allForecasts.slice(i, i + BATCH_SIZE));
+      emit('status', { step: 4, msg: `✨ AI enriching ${allForecasts.length} stores (${batches.length} batches)...` });
+      const enriched = [];
+      for (let i = 0; i < batches.length; i++) {
+        const batch = await enrichBatchWithAI(batches[i], metaMap);
+        enriched.push(...batch);
+        emit('status', { step: 4, msg: `✨ AI enriched ${enriched.length}/${allForecasts.length} stores` });
+      }
+      allForecasts = enriched;
+    }
 
     const grandTotal = allForecasts.reduce((s, f) => s + (parseFloat(f.total_forecast) || 0), 0);
     const counts     = { high: 0, medium: 0, low: 0 };
@@ -322,12 +406,13 @@ router.post('/generate', async (req, res) => {
 
     const payload = {
       forecasts: allForecasts,
-      executive_summary: `Forecast for ${allForecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
+      executive_summary: `${useAI ? 'AI-enhanced' : 'Algorithmic'} forecast for ${allForecasts.length} segments, FY${forecastYear}. Total: ₹${Math.round(grandTotal).toLocaleString('en-IN')}. Confidence: ${counts.high} HIGH, ${counts.medium} MEDIUM, ${counts.low} LOW.`,
       methodology: regularResult.methodology,
       risk_factors: regularResult.risk_factors,
     };
 
-    emit('status', { step: 4, msg: '💾 Saving to PostgreSQL...' });
+    const saveStep = useAI ? 5 : 4;
+    emit('status', { step: saveStep, msg: '💾 Saving to PostgreSQL...' });
     const dbClient = await pool.connect();
     try {
       await dbClient.query('BEGIN');
@@ -358,7 +443,7 @@ router.post('/generate', async (req, res) => {
             f.oct, f.nov, f.dec, f.jan, f.feb, f.mar,
             f.total_forecast, f.yoy_growth_pct, f.confidence,
             JSON.stringify(f.key_insights),
-            JSON.stringify(payload.risk_factors),
+            JSON.stringify(Array.isArray(f.risk_factors) ? f.risk_factors : payload.risk_factors),
             f.seasonal_pattern,
             payload.executive_summary,
             payload.methodology,
@@ -373,21 +458,38 @@ router.post('/generate', async (req, res) => {
       dbClient.release();
     }
 
-    emit('status', { step: 4, msg: '✅ Saved!' });
+    emit('status', { step: saveStep, msg: '✅ Saved!' });
     emit('complete', { forecast: payload, forecastYear });
 
   } catch (err) {
-    console.error('[forecast/generate]', err.message);
+    console.error(`[forecast/${useAI ? 'generate-ai' : 'generate'}]`, err.message);
     emit('error', { msg: err.message });
   } finally {
     res.end();
   }
-});
+}
+
+// POST /api/forecast/generate    — pure numerical forecast (no AI calls)
+router.post('/generate',    (req, res) => runForecastGeneration(req, res, false));
+
+// POST /api/forecast/generate-ai — numerical + Claude Haiku qualitative enrichment
+router.post('/generate-ai', (req, res) => runForecastGeneration(req, res, true));
 
 // GET /api/forecast/latest — fetch all stored forecasts for UI
 router.get('/latest', async (_req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM forecasts ORDER BY forecast_year DESC, cust_old, fiscvarnt');
+    const { rows } = await pool.query(`
+      SELECT f.*,
+        COALESCE(p.h1_actual, 0)::numeric                          AS actual_h1,
+        (f.apr+f.may+f.jun+f.jul+f.aug+f.sep)::numeric            AS fc_h1
+      FROM forecasts f
+      LEFT JOIN (
+        SELECT code, (apr+may+jun+jul+aug+sep)::numeric AS h1_actual
+        FROM   past_sales
+        WHERE  fy_year = (SELECT MAX(fy_year) FROM past_sales)
+      ) p ON p.code = f.cust_old
+      ORDER BY forecast_year DESC, cust_old, fiscvarnt
+    `);
     res.json({ count: rows.length, data: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -495,6 +597,68 @@ Give reasoning, confidence explanation, and 3-5 business recommendations via sub
 
   } catch (err) {
     console.error('[forecast/recommend]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Aggregate helper for deviation analysis
+function devRollup(stores, key) {
+  const agg = {};
+  for (const s of stores) {
+    const k = s[key] || 'Unknown';
+    if (!agg[k]) agg[k] = { key: k, count: 0, fc_h1: 0, actual_h1: 0 };
+    agg[k].count++;
+    agg[k].fc_h1    += s.fc_h1;
+    agg[k].actual_h1 += s.actual_h1;
+  }
+  return Object.values(agg).map(g => ({
+    ...g,
+    dev_pct: g.fc_h1 > 0 ? +((g.actual_h1 - g.fc_h1) / g.fc_h1 * 100).toFixed(1) : null,
+  })).sort((a, b) => Math.abs(b.actual_h1) - Math.abs(a.actual_h1));
+}
+
+// GET /api/forecast/deviation — H1 (Apr-Sep) actual vs forecast deviation at store/grade/zone/region level
+router.get('/deviation', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        f.cust_old, f.name, f.zone, f.region, f.grade, f.channel, f.status,
+        (f.apr + f.may + f.jun + f.jul + f.aug + f.sep)::numeric   AS fc_h1,
+        COALESCE(p.h1_actual, 0)::numeric                          AS actual_h1
+      FROM forecasts f
+      LEFT JOIN (
+        SELECT code, (apr + may + jun + jul + aug + sep)::numeric AS h1_actual
+        FROM   past_sales
+        WHERE  fy_year = (SELECT MAX(fy_year) FROM past_sales)
+      ) p ON p.code = f.cust_old
+      ORDER BY f.zone, f.grade, f.cust_old
+    `);
+
+    const stores = rows.map(r => ({
+      cust_old:  r.cust_old,
+      name:      r.name,
+      zone:      r.zone,
+      region:    r.region,
+      grade:     r.grade,
+      channel:   r.channel,
+      fc_h1:    +parseFloat(r.fc_h1).toFixed(0),
+      actual_h1:+parseFloat(r.actual_h1).toFixed(0),
+      dev_pct:  parseFloat(r.fc_h1) > 0
+        ? +((parseFloat(r.actual_h1) - parseFloat(r.fc_h1)) / parseFloat(r.fc_h1) * 100).toFixed(1)
+        : null,
+    }));
+
+    const matched = stores.filter(s => s.actual_h1 > 0);
+    res.json({
+      stores,
+      byGrade:  devRollup(matched, 'grade'),
+      byZone:   devRollup(matched, 'zone'),
+      byRegion: devRollup(matched, 'region'),
+      matched:  matched.length,
+      total:    stores.length,
+    });
+  } catch (err) {
+    console.error('[forecast/deviation]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
