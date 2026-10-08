@@ -17,44 +17,34 @@ const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
 // Fiscal year month order (Apr = FY start) — used for festival factor lookup
 const FY_MONTHS = ['apr','may','jun','jul','aug','sep','oct','nov','dec','jan','feb','mar'];
 
-// Grade-based calibration factors — derived from FY26-27 H1 actual vs algorithmic forecast
-// Each factor = actual_H1 / forecast_H1 per grade (L2L stores only, New/Renovation excluded)
-// Grades with < 5 stores are dampened (50% correction) to avoid over-fitting noise
-const GRADE_FACTORS = {
-  'A+++':    0.93,   // 16 stores — premium malls over-forecast by ~7%
-  'A++':     1.20,   // 4 stores  — airport/flagship under-forecast by ~24% (dampened)
-  'A+':      1.07,   // 19 stores — slight under-forecast
-  'A':       0.97,   // 38 stores — nearly accurate
-  'B+':      1.01,   // 32 stores — accurate
-  'B':       0.99,   // 42 stores — accurate
-  'C+':      0.89,   // 89 stores — largest group, consistently over-forecast
-  'C':       0.77,   // 3 stores  — significant over-forecast (small towns)
-  'FO/A':    1.21,   // 1 store   — dampened from raw 1.21
-  'FO/B':    1.30,   // 3 stores  — dampened from raw 1.44
-  'FO/B+':   1.07,   // 2 stores
-  'FO/C+':   0.87,   // 10 stores — franchise C+ over-forecast
-  'FO/C':    0.65,   // 4 stores  — dampened from raw 0.59
-  'A+B/A++': 0.85,   // 1 store
-  'A+B/B':   0.86,   // 2 stores
-  'A+B/B+':  0.84,   // 2 stores
-  'A+B/C':   1.07,   // 2 stores
-  'A+B/C+':  0.87,   // 15 stores — A+B format C+ over-forecast
-};
+// In-memory cache for DB-backed config (grade_factors, zone_factors, forecast_config)
+// Refreshes every 5 minutes so DB edits take effect without server restart
+let _cfg = null, _cfgAt = 0;
+async function loadConfig() {
+  if (_cfg && Date.now() - _cfgAt < 300_000) return _cfg;
+  const [g, z, c] = await Promise.all([
+    pool.query('SELECT grade, factor FROM grade_factors'),
+    pool.query('SELECT zone, factor FROM zone_factors'),
+    pool.query('SELECT key, value FROM forecast_config'),
+  ]);
+  _cfg = {
+    GRADE_FACTORS: Object.fromEntries(g.rows.map(r => [r.grade, +r.factor])),
+    ZONE_FACTORS:  Object.fromEntries(z.rows.map(r => [r.zone,  +r.factor])),
+    config:        Object.fromEntries(c.rows.map(r => [r.key,   +r.value])),
+  };
+  _cfgAt = Date.now();
+  return _cfg;
+}
 
-// South zone is systematically over-forecast by ~12.7% across A+++/A/B grades
-// Derived from FY26-27 H1 actuals: South actual ₹50.18 Cr vs forecast ₹57.5 Cr
-const ZONE_FACTORS = {
-  'South': 0.88,
-};
-
-// New store ramp: year-1 stores typically do 60% of what a mature peer does
-// (derived from FY26-27 H1: new store actual = 6.71 Cr vs peer-avg-based 11.64 Cr = 57.6%)
-const NEW_STORE_RAMP = 0.60;
+// Reference defaults (now stored in DB — see sql/create_grade_factors.sql)
+// const GRADE_FACTORS = { 'A+++':0.93,'A++':1.20,'A+':1.07,'A':0.97,'B+':1.01,'B':0.99,'C+':0.89,'C':0.77,'FO/A':1.21,'FO/B':1.30,'FO/B+':1.07,'FO/C+':0.87,'FO/C':0.65,'A+B/A++':0.85,'A+B/B':0.86,'A+B/B+':0.84,'A+B/C':1.07,'A+B/C+':0.87 };
+// const ZONE_FACTORS  = { 'South': 0.88 };  // sql/create_zone_factors.sql
+// const NEW_STORE_RAMP = 0.60;              // forecast_config table: key='new_store_ramp'
 
 // Peer-based forecast for stores with status='New' or < 2 years of history.
 // Matches peers by: grade+zone (preferred) → grade only → channel only.
 // Falls back to own-data algorithm if no peers found.
-function computeNewStoreForecast(newAnalytics, allAnalytics) {
+function computeNewStoreForecast(newAnalytics, allAnalytics, newStoreRamp, cfg) {
   const maturePeers = allAnalytics.filter(p =>
     p.years.length >= 2 &&
     !['new', 'renovation'].includes((p.status || '').toLowerCase())
@@ -64,7 +54,7 @@ function computeNewStoreForecast(newAnalytics, allAnalytics) {
     let peers = maturePeers.filter(p => p.grade === a.grade && p.zone === a.zone);
     if (peers.length < 3) peers = maturePeers.filter(p => p.grade === a.grade);
     if (peers.length < 3) peers = maturePeers.filter(p => p.channel === a.channel);
-    if (!peers.length)    return computeForecast([a]).forecasts[0];
+    if (!peers.length)    return computeForecast([a], cfg).forecasts[0];
 
     const n             = peers.length;
     const peerAvgAnnual = peers.reduce((s, p) => s + (p.annualTotals[Math.max(...p.years)] ?? 0), 0) / n;
@@ -73,7 +63,7 @@ function computeNewStoreForecast(newAnalytics, allAnalytics) {
       return acc;
     }, {});
 
-    const annualTarget = peerAvgAnnual * NEW_STORE_RAMP;
+    const annualTarget = peerAvgAnnual * newStoreRamp;
     const monthly      = {};
     MONTHS.forEach(m => {
       monthly[m] = +(annualTarget * (peerSI[m] ?? 100) / 1200 * (a.festivalFactor?.[m] ?? 1)).toFixed(2);
@@ -87,7 +77,7 @@ function computeNewStoreForecast(newAnalytics, allAnalytics) {
       key_insights: [
         `New store — peer-based forecast from ${peerLabel}`,
         `Peer avg annual: ₹${Math.round(peerAvgAnnual).toLocaleString('en-IN')}`,
-        `Year-1 ramp factor: ${NEW_STORE_RAMP * 100}% of peer avg`,
+        `Year-1 ramp factor: ${(newStoreRamp * 100).toFixed(0)}% of peer avg`,
         `Annual target: ₹${Math.round(annualTarget).toLocaleString('en-IN')}`,
       ],
       seasonal_pattern: `Peer seasonal pattern from ${peerLabel}.`,
@@ -205,17 +195,23 @@ function computeAnalytics(rows) {
 // Algorithmic fallback — same formula as the prompt tells Claude to use
 // blended_growth = 0.7 × recent_YoY + 0.3 × CAGR, capped ±80%
 // month = annual_target × (wtdSeasonalIdx[m] / 1200)
-function computeForecast(analyticsArr) {
+function computeForecast(analyticsArr, cfg) {
+  const GF = cfg?.GRADE_FACTORS ?? {};
+  const ZF = cfg?.ZONE_FACTORS  ?? {};
+  const growthCap    = cfg?.config?.growth_cap_pct     ?? 40;
+  const wYoy         = cfg?.config?.growth_weight_yoy  ?? 0.7;
+  const wCagr        = cfg?.config?.growth_weight_cagr ?? 0.3;
+
   const forecasts = analyticsArr.map(a => {
     const maxYear   = Math.max(...a.years);
     const lastTotal = a.annualTotals[maxYear];
     const yoyKeys   = Object.keys(a.yoyGrowth).sort();
     const recentYoy = yoyKeys.length > 0 ? a.yoyGrowth[yoyKeys[yoyKeys.length - 1]] : 0;
-    const rawGrowth = yoyKeys.length >= 2 ? 0.7 * recentYoy + 0.3 * a.cagr : recentYoy || a.cagr || 0;
-    const growth    = Math.max(-40, Math.min(40, rawGrowth));
+    const rawGrowth = yoyKeys.length >= 2 ? wYoy * recentYoy + wCagr * a.cagr : recentYoy || a.cagr || 0;
+    const growth    = Math.max(-growthCap, Math.min(growthCap, rawGrowth));
 
-    const gradeFactor  = GRADE_FACTORS[a.grade] ?? 1.0;
-    const zoneFactor   = ZONE_FACTORS[a.zone]  ?? 1.0;
+    const gradeFactor  = GF[a.grade] ?? 1.0;
+    const zoneFactor   = ZF[a.zone]  ?? 1.0;
     const annualTarget = lastTotal * (1 + growth / 100) * gradeFactor * zoneFactor;
     const monthly      = {};
     MONTHS.forEach(m => {
@@ -301,18 +297,21 @@ router.post('/generate', async (req, res) => {
     const metaMap = Object.fromEntries(richAnalytics.map(a => [a.cust_old, a]));
     emit('status', { step: 2, msg: `✅ ${richAnalytics.length} segments → forecasting FY${forecastYear}` });
 
-    // Split: new/insufficient stores use peer-based logic; rest go to Claude
+    // Split: new/insufficient stores use peer-based logic; rest use algorithmic forecast
     const isNew = a => ['new', 'renovation'].includes((a.status || '').toLowerCase()) || a.years.length < 2;
     const newAnalytics     = richAnalytics.filter(isNew);
     const regularAnalytics = richAnalytics.filter(a => !isNew(a));
 
-    const newForecasts = computeNewStoreForecast(newAnalytics, richAnalytics);
+    const cfg = await loadConfig();
+    const newStoreRamp = cfg.config.new_store_ramp ?? 0.60;
+
+    const newForecasts = computeNewStoreForecast(newAnalytics, richAnalytics, newStoreRamp, cfg);
     if (newForecasts.length)
-      emit('status', { step: 2, msg: `🆕 ${newForecasts.length} new/renovation stores → peer-based forecast (${NEW_STORE_RAMP * 100}% ramp)` });
+      emit('status', { step: 2, msg: `🆕 ${newForecasts.length} new/renovation stores → peer-based forecast (${(newStoreRamp * 100).toFixed(0)}% ramp)` });
 
     emit('status', { step: 3, msg: `🔢 Computing forecasts for ${regularAnalytics.length} L2L segments...` });
 
-    const regularResult = computeForecast(regularAnalytics);
+    const regularResult = computeForecast(regularAnalytics, cfg);
     const allForecasts  = [...newForecasts, ...regularResult.forecasts];
 
     emit('status', { step: 3, msg: `✅ ${allForecasts.length} forecasts done${newForecasts.length ? ` (${newForecasts.length} peer-based)` : ''}` });
